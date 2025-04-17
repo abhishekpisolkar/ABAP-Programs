@@ -1,0 +1,134 @@
+*&---------------------------------------------------------------------*
+*& Include          ZRE_MM_MATERIAL_FTP_TOP
+*&---------------------------------------------------------------------*
+tables : zmm_mtart_views.
+
+types : begin of gty_mdm_data,
+          request_id         type string,
+          sap_code           type mara-matnr, " string,
+          plant              type string,
+          mat_type           type string,
+          hsn_code           type string,
+          val_class          type string,
+          mat_group          type string,
+          batch_manage       type string,
+          manf_part_no       type string,
+          old_mat_code       type string,
+          mat_desc           type string,
+          po_text            type string,
+          ext_mat_group      type string,
+          moving_price       type string,
+          base_unit          type string,
+          abc_indicator      type string,
+          qa_insp_setup      type string,
+          mdm_create_flag(1),
+          mdm_update_flag(1),
+          mdm_delete_flag(1),
+        end of gty_mdm_data.
+
+types : begin of gty_data,
+          line(255) type c,
+        end of gty_data,
+        begin of gty_mdmlog,
+          field(13163) type c,
+        end of gty_mdmlog,
+        begin of gty_ftp,
+          ls_infilet1(13163) type c,
+        end of gty_ftp,
+        begin of gty_sales_area,
+          vkorg type tvkwz-vkorg,
+          vtweg type tvkwz-vtweg,
+          werks type tvkwz-werks,
+        end of gty_sales_area,
+        begin of gty_vtweg,
+          vtweg type tvtw-vtweg,
+        end of gty_vtweg,
+        begin of ty_mara,
+          matnr type mara-matnr,
+          meins type mara-meins,
+          matkl type mara-matkl,
+          mtart TYPE mara-mtart,
+        end of ty_mara,
+        BEGIN OF ty_marc,
+          matnr TYPE marc-matnr,
+          werks type marc-werks,
+          END OF ty_marc.
+
+data : gt_data       type table of gty_data,
+       gs_data       type gty_data,
+       gt_result     type table of gty_data,
+       gs_file       type sdokpath,
+       gt_file       type table of sdokpath,
+       gt_mdmlog     type table of gty_mdmlog,
+       gs_mdmlog     type          gty_mdmlog,
+       gt_mdm_data   type table of gty_mdm_data,
+       gs_mdm_data   type          gty_mdm_data,
+       gt_mara       type table of ty_mara,
+       gt_marc       type table of ty_marc,
+       gt_ftp        type table of gty_ftp,
+       gs_ftp        type gty_ftp,
+       gt_views      type table of zmm_mtart_views,
+       gt_prctr      type table of zmmt_plant_prctr,
+       gt_sales_area type table of gty_sales_area,
+       gt_vtweg      type table of gty_vtweg,
+       g_matnr       type mara-matnr.
+
+data : gv_host(30)     type c,
+       gv_user(30)     type c,
+       gv_password(40) type c,
+       gv_cmd(255)     type c,
+       gv_len          type i,
+       gv_key          type i value 26101957,
+       gv_rfc          type rfcdes-rfcdest,
+       gv_handle       type i,
+       ftp_path(100)   type c,
+       g_filenm        type sdok_filnm.
+
+data : gt_status_table type table of zmm_mdm_status,
+       gs_status_table type          zmm_mdm_status,
+       gt_return       type standard table of bapiret2,
+       gs_return       like bapiret2,
+       gt_mdm_plant    type table of zmm_mdm_plant.
+
+types : begin of gty_output_file,
+          request_id(16)            type c,
+          delim1                    type c,
+          mdm_create_flag(15)       type c,
+          delim2                    type c,
+          mdm_update_flag(15)       type c,
+          delim3                    type c,
+          mdm_delete_flag(15)       type c,
+          delim4                    type c,
+          sap_create_flag(15)       type c,
+          delim5                    type c,
+          sap_update_flag(15)       type c,
+          delim6                    type c,
+          sap_delete_flag(15)       type c,
+          delim7                    type c,
+          transaction_date_time(24) type c,
+          delim8                    type c,
+          sap_code(20)              type c,
+          delim9                    type c,
+          sap_code_description(40)  type c,
+          delim10                   type c,
+          reject_reason(300)        type c,
+          delim11                   type c,
+          status_flag(11)           type c,
+          delim12                   type c,
+          remarks(300)              type c,
+          delim13                   type c,
+        end of gty_output_file.
+
+data : gt_output_file type table of gty_output_file,
+       gs_output_file type          gty_output_file.
+
+data: lv_f1 type c length 150.
+data: lv_f2 type c length 150.
+data: lv_file1 type c length 150.
+data: lv_file2 type c length 150.
+data: lv_total_records type char5.
+
+constants : c_pipe          type c value '|',
+            c_comma         type c value '!',
+            c_dot           type c value '.',
+            c_file_contents type rsmrgstr-name value '*.*'.
