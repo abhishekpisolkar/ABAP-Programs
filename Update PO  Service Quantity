@@ -1,0 +1,384 @@
+*&---------------------------------------------------------------------*
+*& Report ZMM_PO_UPDATE_SERVICE_QTY
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+report zmm_po_update_service_qty.
+types : begin of ty_file,
+          ebeln      type ekko-ebeln,  "PO
+          ebelp      type ekpo-ebelp,  "PO Item
+*            srvpos      type string,      "Activity Number of service
+          seritem    type extrow,      "Service line item
+          smenge     type string,      "service Qty
+          gpriceunit type string,      "Gross Service unit
+        end of ty_file,
+
+        begin of ty_header,
+          ebeln type ekko-ebeln,
+        end of ty_header.
+
+
+types : begin of ty_final,
+          ebeln type ekko-ebeln,
+          newpo type ekko-ebeln,
+          typ   type string,
+          msg   type string,
+        end of   ty_final.
+
+
+data : it_file      type standard table of ty_file,
+       wa_file      type ty_file,
+       it_final     type table of ty_final,
+       wa_final     type ty_final,
+       it_header    type table of ty_header,
+       fieldcatalog type slis_t_fieldcat_alv with header line,
+       gd_layout    type slis_layout_alv,
+       gd_repid     like sy-repid.
+
+data : wa_header   type bapimepoheader,
+       wa_headerx  type bapimepoheaderx,
+       po          type bapimepoheader-po_number,
+       it_ret      type standard table of bapiret2,
+       wa_ret      type bapiret2,
+       it_item     type standard table of bapimepoitem,
+       wa_item     type bapimepoitem,
+       it_itemx    type standard table of bapimepoitemx,
+       wa_itemx    type bapimepoitemx,
+       it_ser      type standard table of bapiesllc,
+       gt_ser      type standard table of bapiesllc,
+       wa_ser      type bapiesllc,
+       gt_acc_val  type table of bapiesklc,
+       gt_account  type table of bapimepoaccount,
+       gt_accountx type table of bapimepoaccountx.
+
+
+
+selection-screen begin of block b1 with frame title text-001.
+  parameters: p_file type rlgrap-filename,
+              p_test type bapiflag-bapiflag default 'X'. " no-display.
+selection-screen end of block b1.
+
+at selection-screen on value-request for p_file.
+
+  data : lv_rc       type i,
+         lt_file_tab type filetable.
+
+  call method cl_gui_frontend_services=>file_open_dialog
+    exporting
+      window_title = 'Select a file'
+    changing
+      file_table   = lt_file_tab
+      rc           = lv_rc.
+  if sy-subrc is initial.
+    data(ls_file_tab) = value #( lt_file_tab[ 1 ] optional ).
+    if ls_file_tab is not initial.
+      p_file = ls_file_tab-filename.
+    endif.
+  endif.
+
+
+start-of-selection.
+  perform uploadfile.
+  perform processdata.
+  perform fcat.
+  perform display.
+*&---------------------------------------------------------------------*
+*& Form uploadfile
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form uploadfile .
+
+  data  : l_filename type string.
+  data  : l_index type sy-tabix.
+  clear : l_filename, l_index.
+  clear : it_file[], wa_file.
+  data : lv_index type sy-tabix.
+
+  l_filename  = p_file.
+
+  data: it_type      type truxs_t_text_data.
+
+  call function 'TEXT_CONVERT_XLS_TO_SAP'
+    exporting
+      i_field_seperator    = 'X'
+      i_line_header        = 'X'
+      i_tab_raw_data       = it_type
+      i_filename           = p_file
+    tables
+      i_tab_converted_data = it_file
+    exceptions
+      conversion_failed    = 1
+      others               = 2.
+
+endform.
+*&---------------------------------------------------------------------*
+*& Form processdata
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form processdata .
+  data : po_header        type bapimepoheader,
+         po_items         type table of bapimepoitem,
+         po_item_services type table of  bapiesllc,
+         po_acc_val       type table of bapiesklc,
+         po_account       type table of bapimepoaccount,
+         po_accountx      type table of bapimepoaccountx,
+         return           type table of bapiret2.
+
+
+  move-corresponding it_file to it_header.
+  sort it_header by ebeln.
+  delete adjacent duplicates from it_header comparing ebeln.
+
+*  select ebeln from ekko into table @data(it_ekko) for all entries in @it_header
+*                                                   where ebeln = @it_header-ebeln.
+*  if sy-subrc = 0.
+*    sort it_ekko by ebeln.
+*  endif.
+
+  loop at it_header into data(ls_header).
+    refresh : gt_ser, gt_account, gt_accountx, gt_acc_val.
+    refresh : it_ser, it_item, it_itemx,
+              po_items, po_item_services, po_account, return,  po_acc_val.
+    clear : wa_ser, wa_item, wa_itemx.
+
+    data(lv_po_status) = |Purchase Order| && | { ls_header-ebeln } | && | is in progress.|.
+    call function 'SAPGUI_PROGRESS_INDICATOR'
+      exporting
+        text = lv_po_status.
+    clear lv_po_status.
+
+    break del_abap13.
+    call function 'BAPI_PO_GETDETAIL1'
+      exporting
+        purchaseorder      = ls_header-ebeln
+        account_assignment = 'X'
+*       items              = 'X'
+        services           = 'X'
+      importing
+        poheader           = po_header
+      tables
+        poitem             = po_items
+        poaccount          = po_account
+        poservices         = po_item_services
+        posrvaccessvalues  = po_acc_val
+        return             = return.
+    break del_abap13.
+    if return is initial.
+      it_item = value #( for ls_file in it_file where ( ebeln = ls_header-ebeln )
+                         for temp_item in po_items where ( po_item = ls_file-ebelp )
+                       ( po_item    = ls_file-ebelp
+                         pckg_no    = temp_item-pckg_no
+                         item_cat   = temp_item-item_cat
+                         material   = temp_item-material
+                         quantity   = temp_item-quantity
+                         costcenter = temp_item-costcenter
+                         po_unit    = temp_item-po_unit
+                         plant      = temp_item-plant
+                         tax_code   = temp_item-tax_code
+                         matl_group = temp_item-matl_group
+                         acctasscat = temp_item-acctasscat ) ).
+      sort it_item by po_item.
+      delete adjacent duplicates from it_item comparing po_item.
+      it_itemx = value #( for ls_tmp in it_item ( po_item = ls_tmp-po_item
+                                                   po_itemx = abap_true
+                                                   pckg_no    = abap_true
+                                                   item_cat    = abap_true
+                                                   material    = abap_true
+                                                   quantity    = abap_true
+                                                   costcenter  = abap_true
+                                                   po_unit     = abap_true
+                                                   plant       = abap_true
+                                                   tax_code    = abap_true
+                                                   matl_group  = abap_true
+                                                   acctasscat  = abap_true
+                                                    ) ).
+      gt_account = value #( for ls_tmp in it_item
+                            for account in po_account where ( po_item = ls_tmp-po_item )
+                            ( po_item = account-po_item
+                              serial_no = account-serial_no
+*                              quantity   = account-quantity
+                              gl_account = account-gl_account
+                              profit_ctr = account-profit_ctr
+                              wbs_element = account-wbs_element
+                              network = account-network
+                              costcenter = account-costcenter ) ).
+*      append lines of po_account to gt_account.
+      gt_accountx = value #( for accountx in gt_account ( po_item = accountx-po_item
+                                                          serial_no = accountx-serial_no
+                                                          po_itemx = 'X'
+*                                                          serial_nox = 'X'
+*                                                          quantity = 'X'
+                                                          wbs_element = 'X'
+                                                          gl_account = 'X'
+                                                          costcenter = 'X'
+                                                          network = 'X'
+                                                          ) ).
+*      gt_acc_val = value #( for acc_val in po_acc_val ( pckg_no = acc_val-pckg_no
+*                                                       line_no = acc_val-line_no
+*                                                       serno_line = acc_val-serno_line
+*                                                       serial_no = acc_val-serial_no ) ).
+      " Service Qty
+      loop at it_item into wa_item.
+        loop at po_items into data(ls_item) where po_item = wa_item-po_item.
+          refresh it_ser.
+          it_ser = value #( for item_ser in po_item_services where ( pckg_no = ls_item-pckg_no )
+          ( pckg_no = item_ser-pckg_no
+            line_no = item_ser-line_no
+            ext_line = item_ser-ext_line
+            outl_ind = cond #( when item_ser-service is initial then abap_true else abap_false )
+            subpckg_no = item_ser-subpckg_no
+            service = item_ser-service
+            short_text = item_ser-short_text
+            quantity = value #( it_file[ ebelp = ls_item-po_item
+                                         seritem = item_ser-ext_line ]-smenge optional )
+            gr_price = value #( it_file[ ebelp = ls_item-po_item
+                                         seritem = item_ser-ext_line ]-gpriceunit optional ) ) ).
+          if it_ser is not initial.
+            it_ser = value #( base it_ser for ser_tmp in it_ser
+              for item_ser in po_item_services where ( pckg_no = ser_tmp-subpckg_no )
+            ( pckg_no = item_ser-pckg_no
+              line_no = item_ser-line_no
+              ext_line = item_ser-ext_line
+              outl_ind = cond #( when item_ser-service is initial then abap_true else abap_false )
+              subpckg_no = item_ser-subpckg_no
+              service = item_ser-service
+              short_text = item_ser-short_text
+              quantity = value #( it_file[ ebelp   = ls_item-po_item
+                                           seritem = item_ser-ext_line ]-smenge optional )
+              gr_price = value #( it_file[ ebelp   = ls_item-po_item
+                                           seritem = item_ser-ext_line ]-gpriceunit optional ) ) ).
+          endif.
+
+          append lines of it_ser to gt_ser.
+
+          gt_acc_val = value #( for item_ser in po_item_services where ( pckg_no = ls_item-pckg_no )
+                                for acc_val in po_acc_val where ( pckg_no = item_ser-subpckg_no )
+                                                      ( pckg_no = acc_val-pckg_no
+                                                       line_no = acc_val-line_no
+                                                       serno_line = acc_val-serno_line
+                                                       serial_no = acc_val-serial_no ) ).
+          clear ls_item.
+        endloop.
+        clear wa_item.
+      endloop.
+
+      refresh it_ret.
+      call function 'BAPI_PO_CHANGE'
+        exporting
+          purchaseorder     = ls_header-ebeln
+          testrun           = p_test
+          no_price_from_po  = 'X'
+        tables
+          return            = it_ret
+          poitem            = it_item
+          poitemx           = it_itemx
+          poaccount         = gt_account
+          poaccountx        = gt_accountx
+          poservices        = gt_ser
+          posrvaccessvalues = gt_acc_val.
+*      break-point.
+      read table it_ret into wa_ret with key type = 'E'.
+      if sy-subrc = 0.
+
+        loop at it_ret into wa_ret where type = 'E'.
+          wa_final-ebeln = ls_header-ebeln.
+          wa_final-typ   = 'Error'.
+          wa_final-msg   = wa_ret-message.
+          append wa_final to it_final.
+          clear wa_final.
+        endloop.
+
+      else.
+        call function 'BAPI_TRANSACTION_COMMIT'
+          exporting
+            wait = 'X'.
+        wait up to 1 seconds.
+
+        loop at it_ret into wa_ret where type ne 'E' and type ne 'W'.
+          wa_final-ebeln = ls_header-ebeln.
+          wa_final-newpo = po.
+          wa_final-typ   = wa_ret-type.
+          wa_final-msg   = wa_ret-message.
+          append wa_final to it_final.
+          clear wa_final.
+        endloop.
+      endif.
+    endif.
+    clear ls_header.
+  endloop.
+endform.
+*&---------------------------------------------------------------------*
+*& Form fcat
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form fcat .
+
+  gd_layout-colwidth_optimize = 'X'.
+
+  fieldcatalog-fieldname   = 'EBELN'.
+  fieldcatalog-seltext_m   = 'PO No'.
+  fieldcatalog-tabname     = 'IT_FINAL'.
+  append fieldcatalog to fieldcatalog.
+  clear  fieldcatalog.
+
+  fieldcatalog-fieldname   = 'NEWPO'.
+  fieldcatalog-seltext_m   = 'New PO No'.
+  fieldcatalog-tabname     = 'IT_FINAL'.
+  append fieldcatalog to fieldcatalog.
+  clear  fieldcatalog.
+
+  fieldcatalog-fieldname   = 'TYP'.
+  fieldcatalog-seltext_m   = 'Message Type'.
+  fieldcatalog-tabname     = 'IT_FINAL'.
+  append fieldcatalog to fieldcatalog.
+  clear  fieldcatalog.
+
+  fieldcatalog-fieldname   = 'MSG'.
+  fieldcatalog-seltext_m   = 'Message'.
+  fieldcatalog-outputlen   = '50'.
+  fieldcatalog-tabname     = 'IT_FINAL'.
+  append fieldcatalog to fieldcatalog.
+  clear  fieldcatalog.
+endform.
+*&---------------------------------------------------------------------*
+*& Form display
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form display .
+
+  gd_repid = sy-repid.
+  call function 'REUSE_ALV_GRID_DISPLAY'
+    exporting
+      i_callback_program = gd_repid
+*     i_callback_top_of_page  = 'TOP-OF-PAGE'  "see FORM
+*     i_callback_user_command = 'USER_COMMAND'
+      it_fieldcat        = fieldcatalog[]
+      i_save             = 'X'
+*     is_variant         = g_variant
+    tables
+      t_outtab           = it_final[]
+    exceptions
+      program_error      = 1
+      others             = 2.
+  if sy-subrc <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*         WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+  endif.
+
+endform.
