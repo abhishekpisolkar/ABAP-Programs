@@ -1,0 +1,1003 @@
+*&---------------------------------------------------------------------*
+*& Report ZBAPI_MATERIAL
+*&---------------------------------------------------------------------*
+*& Developed by Sanket Bhosale | EY | 
+*&---------------------------------------------------------------------*
+REPORT zbapi_material.
+
+TABLES bapi_mvkex.
+*----------------------------------------------------------------------*
+*----------------------------------------------------------------------*
+* FLAGS
+*----------------------------------------------------------------------*
+DATA: f_stop. " Flag used to stop processing
+
+*----------------------------------------------------------------------*
+* DATA DECLARATIONS
+*----------------------------------------------------------------------*
+DATA : v_empty TYPE i, " No. of empty records
+       v_total TYPE i. " Total no. of records.
+
+*----------------------------------------------------------------------*
+* STRUCTURES & INTERNAL TABLES
+*----------------------------------------------------------------------*
+*--- BAPI structures
+DATA: bapi_head   LIKE bapimathead, " Header Segment with Control
+      "Information
+      bapi_mat    LIKE bapi_te_mara,
+      bapi_matx   LIKE bapi_te_marax,
+
+      bapi_makt   LIKE bapi_makt, " Material Description
+      bapi_mara1  LIKE bapi_mara, " Client Data
+      bapi_marax  LIKE bapi_marax, " Checkbox Structure for BAPI_MARA
+      bapi_marc1  LIKE bapi_marc, " Plant View / Valuation area
+      bapi_marcx  LIKE bapi_marcx, " Checkbox Structure for BAPI_MARC
+      bapi_mard1  LIKE bapi_mard, " Material Data at Storage Location Level
+      bapi_mardx  LIKE bapi_mardx, " Checkbox Structure for BAPI_MARD
+      bapi_mbew1  LIKE bapi_mbew, " Accounting View
+      bapi_mbewx  LIKE bapi_mbewx, " Checkbox Structure for BAPI_MBEW
+      bapi_mvke1  LIKE bapi_mvke, "Sales Data
+      bapi_return LIKE bapiret2, " Return Parameter
+      bapi_mlan   TYPE STANDARD TABLE OF bapi_mlan WITH HEADER LINE INITIAL SIZE 0.
+DATA: return     LIKE bapiret2 OCCURS 0 WITH HEADER LINE.
+
+DATA : BEGIN OF lt_bapi_head OCCURS 100.
+         INCLUDE STRUCTURE bapie1matheader.
+DATA : END OF lt_bapi_head.
+
+DATA : BEGIN OF lt_bapi_mara1 OCCURS 100.
+         INCLUDE STRUCTURE bapie1mara.
+DATA : END OF lt_bapi_mara1.
+
+DATA : BEGIN OF lt_bapi_marax OCCURS 100.
+         INCLUDE STRUCTURE bapie1marax.
+DATA : END OF lt_bapi_marax.
+
+DATA : BEGIN OF lt_bapi_marc1 OCCURS 100.
+         INCLUDE STRUCTURE bapie1marc.
+DATA : END OF lt_bapi_marc1.
+
+DATA : BEGIN OF lt_bapi_marcx OCCURS 100.
+         INCLUDE STRUCTURE bapie1marcx.
+DATA : END OF lt_bapi_marcx.
+
+DATA : BEGIN OF lt_bapi_mvke1 OCCURS 100.
+         INCLUDE STRUCTURE bapie1mvke.
+DATA : END OF lt_bapi_mvke1.
+
+DATA : BEGIN OF lt_bapi_mvkex OCCURS 100.
+         INCLUDE STRUCTURE bapie1mvkex.
+DATA : END OF lt_bapi_mvkex.
+
+
+DATA: lv_sapmatnr TYPE matnr.
+*--- Internal table to hold excel file data
+DATA: it_intern TYPE alsmex_tabline OCCURS 0 WITH HEADER LINE.
+
+DATA : mg03steuer TYPE STANDARD TABLE OF mg03steuer.
+
+*--- Internal table to hold Matetrial descriptions
+DATA: BEGIN OF it_makt OCCURS 100.
+        INCLUDE STRUCTURE bapi_makt.
+DATA: END OF it_makt.
+
+*--- Internal table to hold Units of Measure
+DATA : BEGIN OF it_uom OCCURS 100.
+         INCLUDE STRUCTURE bapi_marm.
+DATA : END OF it_uom.
+
+*--- Internal table to hold Units of Measure X
+DATA : BEGIN OF it_uomx OCCURS 100.
+         INCLUDE STRUCTURE bapi_marmx.
+DATA : END OF it_uomx.
+
+DATA : BEGIN OF it_mattext OCCURS 100.
+         INCLUDE STRUCTURE bapi_mltx.
+DATA : END OF it_mattext.
+
+DATA : BEGIN OF rex OCCURS 100.
+         INCLUDE STRUCTURE bapiparex.
+DATA : END OF rex.
+
+DATA : BEGIN OF rexx OCCURS 100.
+         INCLUDE STRUCTURE bapiparexx.
+DATA : END OF rexx.
+
+
+DATA : noappllog   LIKE bapie1global_data-no_appl_log,
+       nochangedoc LIKE bapie1global_data-no_change_doc,
+       testrun     LIKE bapie1global_data-testrun,
+       inpfldcheck LIKE bapie1global_data-inp_fld_check.
+
+*--- Internal to hold the records in the text file
+DATA : BEGIN OF it_data OCCURS 100,
+         werks       TYPE werks_d,           " Plant
+         mtart       TYPE mtart,             " Material Type
+         matnr       TYPE matnr,             " Material number
+         matkl       TYPE matkl,             " Material group
+
+
+         extwg       TYPE mara-extwg,        " External Material Group
+         brgew       TYPE mara-brgew,        " Gross weight
+         ntgew       TYPE mara-ntgew,        " Net weight
+         magrv       TYPE mara-magrv,        " Material Group: Packaging Materials
+         langu_iso   TYPE laiso,             " Language Key of Text Environment  "pending
+
+         tragr       TYPE mara-tragr,        " Transportation Group
+         steuc       TYPE marc-steuc,        " Control code
+
+
+         mbrsh       TYPE mbrsh,             " Industry sector
+         meins       TYPE meins,             " Base unit of measure
+         gewei       TYPE meins,             " Weight Unit
+         spart       TYPE spart,             " Division
+         ekgrp       TYPE ekgrp,             " Purchasing group
+         vprsv       TYPE vprsv,             " Price control indicator
+         stprs       TYPE mbew-stprs,        " Standard price
+         peinh       TYPE pack3,             " Price unit
+         spras       TYPE spras,             " Language key
+         maktx       TYPE makt-maktx,        " Material description
+         mtpos_mara  TYPE mtpos,             " Item Category Group
+         vkorg       TYPE vkorg,             " Sales Org
+         vtweg       TYPE vtweg,             " Dist channel
+         prdha       TYPE prodh_d,           " Prod Hierarchy
+         ladgr       TYPE ladgr,             " Loading Group
+         prctr       TYPE prctr,             " Profit Centr
+         xchpf       TYPE xfeld,             " Batch Management Requirement Indicator
+         kondm       TYPE kondm,             " Material Pricing Grp
+         ktgrm       TYPE ktgrm,             " Account Assignment Grp
+         mvgr1       TYPE mvgr1,             " Material Group 1
+         mvgr2       TYPE mvgr2,             " Material Group 2
+         mvgr3       TYPE mvgr3,             " Material Group 3
+         versg       TYPE versg,             " Material Statistics Grp
+         jtx1_tax    TYPE taxkm,             " JTX1 Tax
+         jocg_tax    TYPE taxkm,             " JOCG Tax
+         josg_tax    TYPE taxkm,             " JOSG Tax
+         joig_tax    TYPE taxkm,             " JOIG Tax
+         joug_tax    TYPE taxkm,             " JOUG Tax
+         jcos_tax    TYPE taxkm,             " JCOS Tax
+         jtc1_tax    TYPE taxkm,             " JTC1 Tax
+         utxj_tax    TYPE taxkm,             " UTXJ Tax
+         utx2_tax    TYPE taxkm,             " UTX2 Tax
+         utx3_tax    TYPE taxkm,             " UTX3 Tax
+         dismm       TYPE marc-dismm,        " MRP Type
+         dispo       TYPE marc-dispo,        " MRP Control
+         disls       TYPE marc-disls,        " Lot sizing procedure
+         eisbe       TYPE marc-eisbe,        " Safety Stock
+         rwpro       TYPE marc-rwpro,        " Range of coverage profile
+         beskz       TYPE marc-beskz,        " Procurement Type
+         strgr       TYPE marc-strgr,        " Planning Strategy Group
+         vrmod       TYPE marc-vrmod,        " Consumption mode
+         mtvfp       TYPE marc-mtvfp,        " Checking Group for Availability Check
+         lgort       TYPE rmmg1-lgort,       " Storage Location
+         lgfsb       TYPE lgfsb,             " Default storage location for external procurement
+         maxlz       TYPE marc-maxlz,        " Maximum Storage Period
+         mhdrz       TYPE mara-mhdrz,        " Minimum Remaining Shelf Life
+         iprkz       TYPE mara-iprkz,        " Period Indicator for Shelf Life Expiration Dat
+         mhdlp       TYPE mara-mhdlp,        " Storage percentage
+         sled_bbd    TYPE mara-sled_bbd,     " Expiration Date
+         kzdkz       TYPE marc-kzdkz,        " Documentation required indicator
+         bklas       TYPE mbew-bklas,        " Valuation Class
+         ekalr       TYPE mbew-ekalr,        " Material Is Costed with Quantity Structure
+         hkmat       TYPE mbew-hkmat,        " Material-related origin
+         zdom1       TYPE umren,             " Denominator 1
+         zalt1       TYPE meinh,             " Alternative UoM 1
+         znum1       TYPE umrez,             " Numerator for conversion Base UoM 1
+         zdom2       TYPE umren,             " Denominator 2
+         zalt2       TYPE meinh,             " Alternative UoM 2
+         znum2       TYPE umrez,             " Numerator for conversion Base UoM 2
+         zdom3       TYPE umren,             " Denominator 3
+         zalt3       TYPE meinh,             " Alternative UoM 3
+         znum3       TYPE umrez,             " Numerator for conversion Base UoM 3
+         zdom4       TYPE umren,             " Denominator 4
+         zalt4       TYPE meinh,             " Alternative UoM 4
+         znum4       TYPE umrez,             " Numerator for conversion Base UoM 4
+         zdom5       TYPE umren,             " Denominator 5
+         zalt5       TYPE meinh,             " Alternative UoM 5
+         znum5       TYPE umrez,             " Numerator for conversion Base UoM 5
+         zdom6       TYPE umren,             " Denominator 6
+         zalt6       TYPE meinh,             " Alternative UoM 6
+         znum6       TYPE umrez,             " Numerator for conversion Base UoM 6
+         zdom7       TYPE umren,             " Denominator 7
+         zalt7       TYPE meinh,             " Alternative UoM 7
+         znum7       TYPE umrez,             " Numerator for conversion Base UoM 7
+         zdom8       TYPE umren,             " Denominator 8
+         zalt8       TYPE meinh,             " Alternative UoM 8
+         znum8       TYPE umrez,             " Numerator for conversion Base UoM 8
+         zbasic      TYPE char255,           " Basic Data Text
+         zsales      TYPE char255,           " Sales Data Text
+         plifz       TYPE plifz,             " Planned Delivery Time in Days
+         minbe       TYPE minbe,             " Reorder Point
+         bstfe       TYPE bstfe,             " Fixed lot size
+         shzet       TYPE shzet,             " Safety time
+         zzproc_mthd TYPE zproc_mthd,        " Procurement Method
+       END OF it_data.
+
+
+
+*----------------------------------------------------------------------*
+* SELECTION SCREEN. *
+*----------------------------------------------------------------------*
+SELECTION-SCREEN BEGIN OF BLOCK scr1 WITH FRAME TITLE TEXT-111.
+  PARAMETERS : p_file TYPE rlgrap-filename OBLIGATORY. "DEFAULT " Input File
+*  'H:\DATA\Nova\rbc\zrbc129.xls'.
+  PARAMETERS : p_max(4) OBLIGATORY DEFAULT '100'. " no.of recs in a session
+  PARAMETERS : p_header TYPE i DEFAULT 0 NO-DISPLAY. " Header Lines
+  PARAMETERS : p_begcol TYPE i DEFAULT 2 NO-DISPLAY,
+               p_begrow TYPE i DEFAULT 2 NO-DISPLAY,
+               p_endcol TYPE i DEFAULT 100 NO-DISPLAY,
+               p_endrow TYPE i DEFAULT 32000 NO-DISPLAY.
+SELECTION-SCREEN END OF BLOCK scr1.
+
+*---------------------------------------------------------------------*
+* AT SELECTION-SCREEN
+*---------------------------------------------------------------------*
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+*--- Validating file
+  PERFORM validate_file USING p_file.
+
+*----------------------------------------------------------------------*
+* START-OF-SELECTION
+*----------------------------------------------------------------------*
+START-OF-SELECTION.
+*--- Perform to convert the Excel data into an internal table
+  PERFORM convert_xls_itab.
+  IF NOT it_data[] IS INITIAL.
+*    DELETE it_data1 WHERE table_line > 1.
+*    DELETE it_data[] INDEX 1.
+*--- Perform to delete Header lines
+    PERFORM delete_header_empty_recs.
+  ENDIF.
+*----------------------------------------------------------------------*
+* END OF SELECTION.
+*----------------------------------------------------------------------*
+END-OF-SELECTION.
+*--- Perform to upload Material Master data
+  PERFORM upload_matmas.
+
+*----------------------------------------------------------------------*
+* Form : validate_input_file
+*----------------------------------------------------------------------*
+* Description : To provide F4 help for file if read from PC
+*----------------------------------------------------------------------*
+FORM validate_file USING f_file TYPE rlgrap-filename.
+  CALL FUNCTION 'KD_GET_FILENAME_ON_F4'
+    EXPORTING
+      static        = 'X'
+    CHANGING
+      file_name     = f_file
+    EXCEPTIONS
+      mask_too_long = 1
+      OTHERS        = 2.
+  IF sy-subrc <> 0.
+*MESSAGE S010" 'Error in getting filename'.
+  ENDIF.
+ENDFORM. " validate_input_file
+
+*&---------------------------------------------------------------------*
+*& Form CONVER_XLS_ITAB
+*&---------------------------------------------------------------------*
+* To convert XLS to internal table
+*----------------------------------------------------------------------*
+FORM convert_xls_itab.
+
+  DATA lt_raw_data  TYPE truxs_t_text_data.
+
+
+  CALL FUNCTION 'TEXT_CONVERT_XLS_TO_SAP'
+    EXPORTING
+*     I_FIELD_SEPERATOR    =
+      i_line_header        = 'X'
+      i_tab_raw_data       = lt_raw_data
+      i_filename           = p_file
+    TABLES
+      i_tab_converted_data = it_data
+*     i_tab_converted_data = t_upload[]
+    EXCEPTIONS
+      conversion_failed    = 1
+      OTHERS               = 2.
+
+*  CALL FUNCTION 'ALSM_EXCEL_TO_INTERNAL_TABLE'
+*    EXPORTING
+*      filename    = p_file
+*      i_begin_col = p_begcol
+*      i_begin_row = p_begrow
+*      i_end_col   = p_endcol
+*      i_end_row   = p_endrow
+*    TABLES
+*      intern      = it_intern.
+*  IF sy-subrc <> 0.
+** MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+** WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+*  ENDIF.
+*--- Perform to move the data into an internal data
+  PERFORM move_data.
+ENDFORM. " CONVERT_XLS_ITAB
+*&---------------------------------------------------------------------*
+*& Form MOVE_DATA
+*&---------------------------------------------------------------------*
+* text
+*----------------------------------------------------------------------*
+FORM move_data.
+  DATA : lv_index TYPE i.
+  FIELD-SYMBOLS: <fs> TYPE any.
+*--- Sorting the internal table
+  SORT it_intern BY row col.
+  CLEAR it_intern.
+*  LOOP AT it_intern.
+*    MOVE it_intern-col TO lv_index.
+**--- Assigning the each record to an internal table row
+*    ASSIGN COMPONENT lv_index OF STRUCTURE it_data TO <fs>.
+**--- Asigning the field value to a field symbol
+*    <fs> = it_intern-value.
+**MOVE IT_INTERN-VALUE TO <fs>.
+*    AT END OF row.
+*      APPEND it_data.
+*      CLEAR it_data.
+*    ENDAT.
+*  ENDLOOP.
+ENDFORM. " MOVE_DATA
+*&---------------------------------------------------------------------*
+*& Form DELETE_HEADER_EMPTY_RECS
+*&---------------------------------------------------------------------*
+* To delete the Header and empty records
+*----------------------------------------------------------------------*
+FORM delete_header_empty_recs.
+  DATA: lv_tabix LIKE sy-tabix.
+  IF NOT p_header IS INITIAL.
+    LOOP AT it_data.
+      IF p_header > 0 AND NOT it_data IS INITIAL.
+        DELETE it_data FROM 1 TO p_header.
+* P_HEADER = 0.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+  ENDIF.
+  CLEAR it_data.
+*--- To delete the empty lines from internal table
+  LOOP AT it_data.
+    lv_tabix = sy-tabix.
+    IF it_data IS INITIAL.
+      v_empty = v_empty + 1.
+      DELETE it_data INDEX lv_tabix..
+    ENDIF.
+  ENDLOOP.
+  CLEAR it_data.
+*--- Total no of recs in file
+  DESCRIBE TABLE it_data LINES v_total.
+  IF v_total = 0.
+*MESSAGE I013" No records in the file
+    f_stop = 'X'.
+    STOP.
+  ENDIF.
+ENDFORM. " DELETE_HEADER_EMPTY_RECS
+*&---------------------------------------------------------------------*
+*& Form UPLOAD_MATMAS
+*&---------------------------------------------------------------------*
+* to upload Material Master data
+*----------------------------------------------------------------------*
+FORM upload_matmas .
+  LOOP AT it_data.
+* Header
+
+    CLEAR : lv_sapmatnr.
+    CALL FUNCTION 'CONVERSION_EXIT_MATN1_INPUT'
+      EXPORTING
+        input        = it_data-matnr
+      IMPORTING
+        output       = lv_sapmatnr
+      EXCEPTIONS
+        length_error = 1
+        OTHERS       = 2.
+    IF sy-subrc <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*         WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+    ENDIF.
+
+    bapi_head-material = lv_sapmatnr.             " Material number
+    bapi_head-ind_sector = it_data-mbrsh.         " Industry sector
+    bapi_head-matl_type = it_data-mtart.          " Material Type
+    bapi_head-basic_view = 'X'.
+    bapi_head-purchase_view = 'X'.
+    bapi_head-account_view = 'X'.
+    bapi_head-cost_view = 'X'.
+    bapi_head-sales_view = 'X'.
+    bapi_head-quality_view = 'X'.
+    bapi_head-storage_view = 'X'.
+    bapi_head-account_view = 'X'.
+    bapi_head-mrp_view = 'X'.
+
+
+    MOVE-CORRESPONDING bapi_head TO lt_bapi_head.
+    APPEND lt_bapi_head.
+
+* Material Description
+    REFRESH it_makt.
+    it_makt-langu = it_data-spras.                " Language key
+    it_makt-matl_desc = it_data-maktx.            " Material description
+    APPEND it_makt.
+
+
+* Client Data - Basic
+    bapi_mara1-matl_group = it_data-matkl.        " Material group
+    bapi_marax-matl_group = 'X'.
+
+    bapi_mara1-basic_matl = it_data-matnr.
+    bapi_marax-basic_matl = 'X'.
+
+    bapi_mara1-base_uom = it_data-meins.          " Base unit of measure
+    bapi_marax-base_uom = 'X'.
+
+    SELECT SINGLE isocode
+      FROM t006
+      INTO bapi_mara1-base_uom_iso                " Base unit of measure ISO
+      WHERE msehi = it_data-meins.
+    bapi_marax-base_uom_iso = 'X'.
+
+    bapi_mara1-unit_of_wt = it_data-gewei.        " Weight Unit
+    bapi_marax-unit_of_wt = 'X'.
+
+    it_data-spart = |{ it_data-spart ALPHA = IN }|.
+    bapi_mara1-division = it_data-spart.          " Division
+    bapi_marax-division = 'X'.
+
+    bapi_mara1-item_cat = it_data-mtpos_mara.     " Item Category Group
+    bapi_marax-item_cat = 'X'.
+
+    bapi_mara1-prod_hier = it_data-prdha.         " Prod Hierarchy
+    bapi_marax-prod_hier = 'X'.
+
+    IF it_data-mhdrz IS NOT INITIAL.
+      bapi_mara1-minremlife = it_data-mhdrz.        " Minimum Remaining Shelf Life
+      bapi_marax-minremlife = 'X'.
+    ENDIF.
+
+    bapi_mara1-period_ind_expiration_date         " Period Indicator for Shelf Life Expiration Dat
+                        = it_data-iprkz.
+    bapi_marax-period_ind_expiration_date = 'X'.
+
+    bapi_mara1-trans_grp = it_data-tragr.         " Transportation Group
+    bapi_mara1-trans_grp = 'X'.
+
+    bapi_mara1-stor_pct = it_data-mhdlp.          " Storage percentage
+    bapi_marax-stor_pct = 'X'.
+
+    bapi_mara1-sled_bbd = it_data-sled_bbd.       " Expiration Date
+    bapi_marax-sled_bbd = 'X'.
+
+    bapi_mara1-extmatlgrp = it_data-extwg.        " External Material Group
+    bapi_marax-extmatlgrp = 'X'.
+
+    bapi_mara1-net_weight = it_data-ntgew.        " Net weight
+    bapi_marax-net_weight = 'X'.
+
+    bapi_mara1-mat_grp_sm = it_data-magrv.        " Material Group: Packaging Materials
+    bapi_marax-mat_grp_sm = 'X'.
+
+*    bapi_mara1-pr
+
+    MOVE-CORRESPONDING bapi_mara1 TO lt_bapi_mara1.
+    APPEND lt_bapi_mara1.
+    MOVE-CORRESPONDING bapi_marax TO lt_bapi_marax.
+    APPEND lt_bapi_marax.
+
+* Unit of measure
+    it_uom-gross_wt = it_data-brgew.              " Gross weight
+    it_uomx-gross_wt = 'X'.
+    APPEND it_uom.
+    APPEND it_uomx.
+
+    IF it_data-zdom1 IS NOT INITIAL.
+      it_uom-denominatr = it_data-zdom1.          " Denominator 1
+      it_uomx-denominatr = 'X'.
+      IF it_data-zalt1 IS NOT INITIAL.
+        it_uom-alt_unit = it_data-zalt1.          " Alternative UoM 1
+        SELECT SINGLE isocode
+          FROM t006
+          INTO it_uom-alt_unit_iso
+          WHERE msehi = it_data-zalt1.
+        it_uomx-alt_unit = it_data-zalt1.
+        it_uomx-alt_unit_iso = it_uom-alt_unit_iso.
+      ENDIF.
+      IF it_data-znum1 IS NOT INITIAL.
+        it_uom-numerator = it_data-znum1.         " Numerator for conversion Base UoM 1
+        it_uomx-numerator = 'X'.
+      ENDIF.
+      it_uom-unit_of_wt = it_data-meins.
+      it_uomx-unit_of_wt = 'X'.
+      SELECT SINGLE isocode
+        FROM t006
+        INTO it_uom-unit_of_wt_iso
+        WHERE msehi = it_data-meins.
+      it_uomx-unit_of_wt_iso = 'X'.
+      APPEND it_uom.
+      APPEND it_uomx.
+    ENDIF.
+    IF it_data-zdom2 IS NOT INITIAL.
+      it_uom-denominatr = it_data-zdom2.          " Denominator 2
+      it_uomx-denominatr = 'X'.
+      IF it_data-zalt2 IS NOT INITIAL.
+        it_uom-alt_unit = it_data-zalt2.          " Alternative UoM 2
+        SELECT SINGLE isocode
+          FROM t006
+          INTO it_uom-alt_unit_iso
+          WHERE msehi = it_data-zalt2.
+        it_uomx-alt_unit = it_data-zalt2.
+        it_uomx-alt_unit_iso = it_uom-alt_unit_iso.
+      ENDIF.
+      IF it_data-znum2 IS NOT INITIAL.
+        it_uom-numerator = it_data-znum2.         " Numerator for conversion Base UoM 2
+        it_uomx-numerator = 'X'.
+      ENDIF.
+      it_uom-unit_of_wt = it_data-meins.
+      it_uomx-unit_of_wt = 'X'.
+      SELECT SINGLE isocode
+        FROM t006
+        INTO it_uom-unit_of_wt_iso
+        WHERE msehi = it_data-meins.
+      it_uomx-unit_of_wt_iso = 'X'.
+      APPEND it_uom.
+      APPEND it_uomx.
+    ENDIF.
+    IF it_data-zdom3 IS NOT INITIAL.
+      it_uom-denominatr = it_data-zdom3.          " Denominator 3
+      it_uomx-denominatr = 'X'.
+      IF it_data-zalt3 IS NOT INITIAL.
+        it_uom-alt_unit = it_data-zalt3.          " Alternative UoM 3
+        SELECT SINGLE isocode
+          FROM t006
+          INTO it_uom-alt_unit_iso
+          WHERE msehi = it_data-zalt3.
+        it_uomx-alt_unit = it_data-zalt3.
+        it_uomx-alt_unit_iso = it_uom-alt_unit_iso.
+      ENDIF.
+      IF it_data-znum3 IS NOT INITIAL.
+        it_uom-numerator = it_data-znum3.         " Numerator for conversion Base UoM 3
+        it_uomx-numerator = 'X'.
+      ENDIF.
+      it_uom-unit_of_wt = it_data-meins.
+      it_uomx-unit_of_wt = 'X'.
+      SELECT SINGLE isocode
+        FROM t006
+        INTO it_uom-unit_of_wt_iso
+        WHERE msehi = it_data-meins.
+      it_uomx-unit_of_wt_iso = 'X'.
+      APPEND it_uom.
+      APPEND it_uomx.
+    ENDIF.
+    IF it_data-zdom4 IS NOT INITIAL.
+      it_uom-denominatr = it_data-zdom4.          " Denominator 4
+      it_uomx-denominatr = 'X'.
+      IF it_data-zalt4 IS NOT INITIAL.
+        it_uom-alt_unit = it_data-zalt4.          " Alternative UoM 4
+        SELECT SINGLE isocode
+          FROM t006
+          INTO it_uom-alt_unit_iso
+          WHERE msehi = it_data-zalt4.
+        it_uomx-alt_unit = it_data-zalt4.
+        it_uomx-alt_unit_iso = it_uom-alt_unit_iso.
+      ENDIF.
+      IF it_data-znum4 IS NOT INITIAL.
+        it_uom-numerator = it_data-znum4.         " Numerator for conversion Base UoM 4
+        it_uomx-numerator = 'X'.
+      ENDIF.
+      it_uom-unit_of_wt = it_data-meins.
+      it_uomx-unit_of_wt = 'X'.
+      SELECT SINGLE isocode
+        FROM t006
+        INTO it_uom-unit_of_wt_iso
+        WHERE msehi = it_data-meins.
+      it_uomx-unit_of_wt_iso = 'X'.
+      APPEND it_uom.
+      APPEND it_uomx.
+    ENDIF.
+    IF it_data-zdom5 IS NOT INITIAL.
+      it_uom-denominatr = it_data-zdom5.          " Denominator 5
+      it_uomx-denominatr = 'X'.
+      IF it_data-zalt5 IS NOT INITIAL.
+        it_uom-alt_unit = it_data-zalt5.          " Alternative UoM 5
+        SELECT SINGLE isocode
+          FROM t006
+          INTO it_uom-alt_unit_iso
+          WHERE msehi = it_data-zalt5.
+        it_uomx-alt_unit = it_data-zalt5.
+        it_uomx-alt_unit_iso = it_uom-alt_unit_iso.
+      ENDIF.
+      IF it_data-znum5 IS NOT INITIAL.
+        it_uom-numerator = it_data-znum5.         " Numerator for conversion Base UoM 5
+        it_uomx-numerator = 'X'.
+      ENDIF.
+      it_uom-unit_of_wt = it_data-meins.
+      it_uomx-unit_of_wt = 'X'.
+      SELECT SINGLE isocode
+        FROM t006
+        INTO it_uom-unit_of_wt_iso
+        WHERE msehi = it_data-meins.
+      it_uomx-unit_of_wt_iso = 'X'.
+      APPEND it_uom.
+      APPEND it_uomx.
+    ENDIF.
+    IF it_data-zdom6 IS NOT INITIAL.
+      it_uom-denominatr = it_data-zdom6.          " Denominator 6
+      it_uomx-denominatr = 'X'.
+      IF it_data-zalt6 IS NOT INITIAL.
+        it_uom-alt_unit = it_data-zalt6.          " Alternative UoM 6
+        SELECT SINGLE isocode
+          FROM t006
+          INTO it_uom-alt_unit_iso
+          WHERE msehi = it_data-zalt6.
+        it_uomx-alt_unit = it_data-zalt6.
+        it_uomx-alt_unit_iso = it_uom-alt_unit_iso.
+      ENDIF.
+      IF it_data-znum6 IS NOT INITIAL.
+        it_uom-numerator = it_data-znum6.         " Numerator for conversion Base UoM 6
+        it_uomx-numerator = 'X'.
+      ENDIF.
+      it_uom-unit_of_wt = it_data-meins.
+      it_uomx-unit_of_wt = 'X'.
+      SELECT SINGLE isocode
+        FROM t006
+        INTO it_uom-unit_of_wt_iso
+        WHERE msehi = it_data-meins.
+      it_uomx-unit_of_wt_iso = 'X'.
+      APPEND it_uom.
+      APPEND it_uomx.
+    ENDIF.
+    IF it_data-zdom7 IS NOT INITIAL.
+      it_uom-denominatr = it_data-zdom7.          " Denominator 7
+      it_uomx-denominatr = 'X'.
+      IF it_data-zalt7 IS NOT INITIAL.
+        it_uom-alt_unit = it_data-zalt7.          " Alternative UoM 7
+        SELECT SINGLE isocode
+          FROM t006
+          INTO it_uom-alt_unit_iso
+          WHERE msehi = it_data-zalt7.
+        it_uomx-alt_unit = it_data-zalt7.
+        it_uomx-alt_unit_iso = it_uom-alt_unit_iso.
+      ENDIF.
+      IF it_data-znum7 IS NOT INITIAL.
+        it_uom-numerator = it_data-znum7.         " Numerator for conversion Base UoM 7
+        it_uomx-numerator = 'X'.
+      ENDIF.
+      it_uom-unit_of_wt = it_data-meins.
+      it_uomx-unit_of_wt = 'X'.
+      SELECT SINGLE isocode
+        FROM t006
+        INTO it_uom-unit_of_wt_iso
+        WHERE msehi = it_data-meins.
+      it_uomx-unit_of_wt_iso = 'X'.
+      APPEND it_uom.
+      APPEND it_uomx.
+    ENDIF.
+    IF it_data-zdom8 IS NOT INITIAL.
+      it_uom-denominatr = it_data-zdom8.          " Denominator 8
+      it_uomx-denominatr = 'X'.
+      IF it_data-zalt8 IS NOT INITIAL.
+        it_uom-alt_unit = it_data-zalt8.          " Alternative UoM 8
+        SELECT SINGLE isocode
+          FROM t006
+          INTO it_uom-alt_unit_iso
+          WHERE msehi = it_data-zalt8.
+        it_uomx-alt_unit = it_data-zalt8.
+        it_uomx-alt_unit_iso = it_uom-alt_unit_iso.
+      ENDIF.
+      IF it_data-znum8 IS NOT INITIAL.
+        it_uom-numerator = it_data-znum8.         " Numerator for conversion Base UoM 8
+        it_uomx-numerator = 'X'.
+      ENDIF.
+      it_uom-unit_of_wt = it_data-meins.
+      it_uomx-unit_of_wt = 'X'.
+      SELECT SINGLE isocode
+        FROM t006
+        INTO it_uom-unit_of_wt_iso
+        WHERE msehi = it_data-meins.
+      it_uomx-unit_of_wt_iso = 'X'.
+      APPEND it_uom.
+      APPEND it_uomx.
+    ENDIF.
+
+    DELETE it_uom WHERE alt_unit IS INITIAL.
+    DELETE it_uomx WHERE alt_unit IS INITIAL.
+
+
+
+* Plant - Purchasing
+    bapi_marc1-plant = it_data-werks.             " Plant
+    bapi_marcx-plant = it_data-werks.
+*    bapi_marcx-plant = 'X'.
+
+    bapi_marc1-pur_group = it_data-ekgrp.         " Purchasing group
+    bapi_marcx-pur_group = 'X'.
+
+    bapi_marc1-loadinggrp = it_data-ladgr.        " Loading Group
+    bapi_marcx-loadinggrp = 'X'.
+
+    bapi_marc1-mrp_type = it_data-dismm.          " MRP Type
+    bapi_marcx-mrp_type = 'X'.
+
+    bapi_marc1-mrp_ctrler = it_data-dispo.        " MRP Control
+    bapi_marcx-mrp_ctrler = 'X'.
+
+    bapi_marc1-lotsizekey = it_data-disls.        " Lot sizing procedure
+    bapi_marcx-lotsizekey = 'X'.
+
+    bapi_marc1-safety_stk = it_data-eisbe.        " Safety Stock
+    bapi_marcx-safety_stk = 'X'.
+
+    bapi_marc1-covprofile = it_data-rwpro.        " Range of coverage profile
+    bapi_marcx-covprofile = 'X'.
+
+    bapi_marc1-proc_type = it_data-beskz.         " Procurement Type
+    bapi_marcx-proc_type = 'X'.
+
+    bapi_marc1-plan_strgp = it_data-strgr.        " Planning Strategy Group
+    bapi_marcx-plan_strgp = 'X'.
+
+    bapi_marc1-consummode = it_data-vrmod.        " Consumption mode
+    bapi_marcx-consummode = 'X'.
+
+    bapi_marc1-availcheck = it_data-mtvfp.        " Checking Group for Availability Check
+    bapi_marcx-availcheck = 'X'.
+
+    bapi_marc1-ctrl_code = it_data-steuc.         " Control Code
+    bapi_marcx-availcheck = 'X'.
+
+    bapi_marc1-stgeperiod = it_data-maxlz.        " Maximum Storage Period
+    bapi_marcx-stgeperiod = 'X'.
+
+    bapi_marc1-doc_reqd = it_data-kzdkz.          " Documentation required indicator
+    bapi_marcx-doc_reqd = 'X'.
+
+    it_data-prctr = |{ it_data-prctr ALPHA = IN }|.
+    bapi_marc1-profit_ctr = it_data-prctr.        " Profit Centr
+    bapi_marcx-profit_ctr = 'X'.
+
+    bapi_marc1-batch_mgmt = it_data-xchpf.        " Batch Management Requirement Indicator
+    bapi_marcx-batch_mgmt = 'X'.
+
+    bapi_marc1-plnd_delry = it_data-plifz.        " Planned Delivery Time in Days
+    bapi_marcx-plnd_delry = 'X'.
+
+    bapi_marc1-reorder_pt = it_data-minbe.        " Reorder Point
+    bapi_marcx-reorder_pt = 'X'.
+
+    bapi_marc1-fixed_lot = it_data-bstfe.         " Fixed lot size
+    bapi_marcx-fixed_lot = 'X'.
+
+    bapi_marc1-safetytime = it_data-shzet.        " Safety time
+    bapi_marcx-safetytime = 'X'.
+
+    bapi_marc1-sloc_exprc = it_data-lgfsb.        " Default storage location for external procurement
+    bapi_marcx-sloc_exprc = 'X'.
+
+    MOVE-CORRESPONDING bapi_marc1 TO lt_bapi_marc1.
+    APPEND lt_bapi_marc1.
+    MOVE-CORRESPONDING bapi_marcx TO lt_bapi_marcx.
+    APPEND lt_bapi_marcx.
+
+* Accounting
+    BREAK abaper.
+    bapi_mbew1-val_area = it_data-werks.          " Valuation area
+    bapi_mbewx-val_area = it_data-werks.
+
+    bapi_mbew1-val_class = it_data-bklas.         " Valuation class
+    bapi_mbewx-val_class = 'X'.
+
+    bapi_mbew1-price_ctrl = it_data-vprsv.        " Price control indicator
+    bapi_mbewx-price_ctrl = 'X'.
+
+    bapi_mbew1-std_price = it_data-stprs.         " Standard price
+    bapi_mbewx-std_price = 'X'.
+
+    bapi_mbew1-price_unit = it_data-peinh.        " Price unit
+    bapi_mbewx-price_unit = 'X'.
+
+    bapi_mbew1-qty_struct = it_data-ekalr.        " Material Is Costed with Quantity Structure
+    bapi_mbewx-qty_struct = 'X'.
+
+    bapi_mbew1-orig_mat = it_data-hkmat.          " Material-related origin
+    bapi_mbewx-orig_mat = 'X'.
+
+    bapi_mbew1-price_ctrl = it_data-vprsv.        " Price control indicator
+    bapi_mbewx-price_ctrl = 'X'.
+
+
+* Storage Location
+    bapi_mard1-plant = it_data-werks.             " Plant
+    bapi_mardx-plant = it_data-werks.
+
+    bapi_mard1-stge_loc = it_data-lgort.          " Storage Location
+    bapi_mardx-stge_loc = it_data-lgort.
+
+
+* Sales Data
+    bapi_mvke1-item_cat = it_data-mtpos_mara.     " Item category
+    bapi_mvkex-item_cat = 'X'.
+
+    bapi_mvke1-sales_org = it_data-vkorg.         " Sales Org
+    bapi_mvkex-sales_org = it_data-vkorg.
+
+    bapi_mvke1-distr_chan = it_data-vtweg.        " Dist channel
+    bapi_mvkex-distr_chan = it_data-vtweg.
+
+    bapi_mvke1-mat_pr_grp = it_data-kondm.        " Material Pricing Grp
+    bapi_mvkex-mat_pr_grp = 'X'.
+
+    bapi_mvke1-acct_assgt = it_data-ktgrm.        " Account Assignment Grp
+    bapi_mvkex-acct_assgt = 'X'.
+
+    bapi_mvke1-matl_grp_1 = it_data-mvgr1.        " Material Group 1
+    bapi_mvkex-matl_grp_1 = 'X'.
+    bapi_mvke1-matl_grp_2 = it_data-mvgr2.        " Material Group 2
+    bapi_mvkex-matl_grp_2 = 'X'.
+    bapi_mvke1-matl_grp_3 = it_data-mvgr3.        " Material Group 3
+    bapi_mvkex-matl_grp_3 = 'X'.
+    bapi_mvke1-matl_stats = it_data-versg.        " Material Statistics Grp
+    bapi_mvkex-matl_stats = 'X'.
+
+    MOVE-CORRESPONDING bapi_mvke1 TO lt_bapi_mvke1.
+    APPEND lt_bapi_mvke1.
+
+    MOVE-CORRESPONDING bapi_mvkex TO lt_bapi_mvkex.
+    APPEND lt_bapi_mvkex.
+
+*Tax classification
+    CALL FUNCTION 'STEUERTAB_IDENTIFY'
+      EXPORTING
+*       KZRFB                 = ' '
+        vkorg                 = it_data-vkorg
+        bukrs_vkorg           = it_data-vkorg
+        vtweg                 = it_data-vtweg
+      TABLES
+        steuertab             = mg03steuer
+      EXCEPTIONS
+        wrong_call            = 1
+        vkorg_bukrs_not_found = 2
+        steuertab_empty       = 3
+        OTHERS                = 4.
+    IF sy-subrc = 0.
+* Implement suitable error handling here
+      SELECT SINGLE land1
+        FROM t001w
+        INTO @DATA(lv_land1)
+        WHERE vkorg = @it_data-vkorg.
+
+      LOOP AT mg03steuer INTO DATA(ls_dt).
+        CASE ls_dt-tatyp.
+          WHEN 'JTX1'.
+            bapi_mlan-tax_type_1 = ls_dt-tatyp.
+            bapi_mlan-taxclass_1 = it_data-jtx1_tax. " JTX1 Tax
+          WHEN 'JOCG'.
+            bapi_mlan-tax_type_1 = ls_dt-tatyp.
+            bapi_mlan-taxclass_1 = it_data-jocg_tax. " JOGC Tax
+          WHEN 'JOSG'.
+            bapi_mlan-tax_type_1 = ls_dt-tatyp.
+            bapi_mlan-taxclass_1 = it_data-josg_tax. " JOSG Tax
+          WHEN 'JOIG'.
+            bapi_mlan-tax_type_1 = ls_dt-tatyp.
+            bapi_mlan-taxclass_1 = it_data-joig_tax. " JOIG Tax
+          WHEN 'JOUG'.
+            bapi_mlan-tax_type_1 = ls_dt-tatyp.
+            bapi_mlan-taxclass_1 = it_data-joug_tax. " JOUG Tax
+          WHEN 'JCOS'.
+            bapi_mlan-tax_type_1 = ls_dt-tatyp.
+            bapi_mlan-taxclass_1 = it_data-jcos_tax. " JCOS Tax
+          WHEN 'JTC1'.
+            bapi_mlan-tax_type_1 = ls_dt-tatyp.
+            bapi_mlan-taxclass_1 = it_data-jtc1_tax. " JTC1 Tax
+          WHEN 'UTXJ'.
+            bapi_mlan-tax_type_1 = ls_dt-tatyp.
+            bapi_mlan-taxclass_1 = it_data-utxj_tax. " UTXJ Tax
+          WHEN 'UTX2'.
+            bapi_mlan-tax_type_1 = ls_dt-tatyp.
+            bapi_mlan-taxclass_1 = it_data-utx2_tax. " UTX2 Tax
+          WHEN 'UTX3'.
+            bapi_mlan-tax_type_1 = ls_dt-tatyp.
+            bapi_mlan-taxclass_1 = it_data-utx3_tax. " UTX3 Tax
+        ENDCASE.
+        bapi_mlan-tax_ind    = '1'.
+        bapi_mlan-depcountry = lv_land1.
+        bapi_mlan-depcountry_iso = lv_land1.
+        APPEND bapi_mlan.
+      ENDLOOP.
+      DELETE bapi_mlan[] WHERE tax_type_1 IS INITIAL.
+    ENDIF.
+
+* Material Text
+
+    CLEAR : it_mattext.
+    it_mattext-applobject = 'MATERIAL'.
+    it_mattext-text_name = lv_sapmatnr.
+    it_mattext-text_id = 'GRUN'.
+    it_mattext-langu = 'E'.
+    it_mattext-langu_iso = 'EN'.
+    it_mattext-format_col = '*'.
+    it_mattext-text_line = it_data-zbasic.
+    APPEND it_mattext.
+
+    CLEAR : it_mattext.
+    it_mattext-applobject = 'MATERIAL'.
+    it_mattext-text_name = lv_sapmatnr.
+    it_mattext-text_id = 'BEST'.
+    it_mattext-langu = 'E'.
+    it_mattext-langu_iso = 'EN'.
+    it_mattext-format_col = '*'.
+    it_mattext-text_line = it_data-zsales.
+    APPEND it_mattext.
+
+* Extension
+
+    bapi_mat-material = lv_sapmatnr.
+    bapi_mat-zzproc_mthd = it_data-zzproc_mthd.
+
+    bapi_matx-material = lv_sapmatnr.
+    bapi_matx-zzproc_mthd = it_data-zzproc_mthd.
+
+    rex-structure = 'BAPI_TE_MARA'.
+    rex-valuepart1 = bapi_mat.
+    APPEND rex.
+
+    rexx-structure = 'BAPI_TE_MARAX'.
+    rexx-valuepart1 = bapi_matx.
+    APPEND rexx.
+
+
+    CALL FUNCTION 'BAPI_MATERIAL_SAVEREPLICA'
+      EXPORTING
+        noappllog   = space
+        nochangedoc = space
+        testrun     = space
+        inpfldcheck = space
+      IMPORTING
+        return      = bapi_return
+      TABLES
+        headdata    = lt_bapi_head
+        clientdata  = lt_bapi_mara1
+        clientdatax = lt_bapi_marax
+        plantdata   = lt_bapi_marc1
+        plantdatax  = lt_bapi_marcx
+        salesdata   = lt_bapi_mvke1
+        salesdatax  = lt_bapi_mvkex
+*       materialdescription = it_makt
+      .
+
+*--- BAPI to create material
+    CALL FUNCTION 'BAPI_MATERIAL_SAVEDATA'
+      EXPORTING
+        headdata             = bapi_head
+        clientdata           = bapi_mara1
+        clientdatax          = bapi_marax
+        plantdata            = bapi_marc1
+        plantdatax           = bapi_marcx
+        storagelocationdata  = bapi_mard1
+        storagelocationdatax = bapi_mardx
+        valuationdata        = bapi_mbew1
+        valuationdatax       = bapi_mbewx
+        salesdata            = bapi_mvke1
+        salesdatax           = bapi_mvkex
+      IMPORTING
+        return               = bapi_return
+      TABLES
+        materialdescription  = it_makt
+        unitsofmeasure       = it_uom
+        unitsofmeasurex      = it_uomx
+        materiallongtext     = it_mattext
+        taxclassifications   = bapi_mlan[]
+        extensionin          = rex[]
+        extensioninx         = rexx[].
+
+    FREE : bapi_mlan, it_uom, it_uomx, it_mattext.
+    IF bapi_return-type = 'E'.
+      WRITE:/ 'Error:' ,bapi_return-message ,'for material:' ,it_data-matnr.
+    ELSEIF bapi_return-type = 'S'.
+      WRITE: 'Successfully created/Changed material' ,it_data-matnr.
+      NEW-LINE NO-SCROLLING.
+      CLEAR return.
+      REFRESH return.
+      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+        IMPORTING
+          return = return.
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM. " UPLOAD_MATMAS
