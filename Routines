@@ -1,0 +1,1995 @@
+*&---------------------------------------------------------------------*
+*& Include          ZRE_MM_MATERIAL_FTP_SUB
+*&---------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*& Form ftp_connect
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form ftp_connect .
+  gv_host = '192.168.100.14' .
+  gv_user = 'Welspun_MDM ' .
+  gv_password = 'W@lspun#mdm2020' .
+
+
+*Get length of the Password
+  gv_len = strlen( gv_password ) .
+  if p_ftp eq 'X' .
+    gv_rfc = 'SAPFTP' .
+  elseif p_ftpa eq 'X' .
+    gv_rfc = 'SAPFTPA' .
+  endif.
+
+  call function 'HTTP_SCRAMBLE'
+    exporting
+      source      = gv_password
+      sourcelen   = gv_len
+      key         = gv_key
+    importing
+      destination = gv_password.
+
+  call function 'SAPGUI_PROGRESS_INDICATOR'
+    exporting
+      text = 'Connecting to FTP Server'.
+
+* Establish FTP Connection
+  call function 'FTP_CONNECT'
+    exporting
+      user            = gv_user
+      password        = gv_password
+      host            = gv_host
+      rfc_destination = gv_rfc
+    importing
+      handle          = gv_handle
+    exceptions
+      not_connected   = 1
+      others          = 2.
+  if sy-subrc <> 0.
+    message 'FTP Connection is not successfull' type 'E'.
+  endif.
+
+  data(gv_hdl) = gv_handle .
+*  ftp_path  = cond #( when sy-sysid = 'WED' then '/Welspun_MDM/DEV/WEL/MATERIAL/INPUT/'
+*                      when sy-sysid = 'WEQ' then '/Welspun_MDM/QA/WEL/MATERIAL/OUTPUT/'
+*                      when sy-sysid = 'WEP' then '/Welspun_MDM/PROD/WEL/MATERIAL/INPUT/' ).
+  ftp_path  = cond #( when sy-sysid = 'WED' then '/Welspun_MDM/DEV/WEL_HANA/MATERIAL_REQUEST/INPUT/'
+                      when sy-sysid = 'WEQ' then '/Welspun_MDM/QA/WEL_HANA/MATERIAL_REQUEST/INPUT/'
+                      when sy-sysid = 'WEP' then '/Welspun_MDM/QA/WEL_HANA/MATERIAL_REQUEST/INPUT/' ).
+
+  concatenate 'cd' ftp_path into gv_cmd separated by space .
+
+  clear gt_result .
+  call function 'FTP_COMMAND'
+    exporting
+      handle        = gv_hdl
+      command       = gv_cmd
+    tables
+      data          = gt_result
+    exceptions
+      tcpip_error   = 1
+      command_error = 2
+      data_error    = 3
+      others        = 4.
+  if sy-subrc <> 0.
+* Implement suitable error handling here
+    data(lv_msg) = |FTP_COMMAND { gv_cmd } is not successful|.
+    message lv_msg type 'E' .
+  endif.
+* Begin of Commented by Abhishek.P(20.03.2025)
+*  call function 'SAPGUI_PROGRESS_INDICATOR'
+*    exporting
+*      text = 'Establishing Passive mode with Server'.
+*
+*  gv_cmd = 'set passive on' .
+** Set Passive on
+*  call function 'FTP_COMMAND'
+*    exporting
+*      handle        = gv_handle
+*      command       = gv_cmd
+*    tables
+*      data          = gt_data
+*    exceptions
+*      tcpip_error   = 1
+*      command_error = 2
+*      data_error    = 3
+*      others        = 4.
+*  if sy-subrc <> 0.
+*    message 'FTP_COMMAND: PASV is not successfull' type 'E'.
+*  endif.
+* End of Commented by Abhishek.P(20.03.2025)
+
+endform.
+*&---------------------------------------------------------------------*
+*& Form read_ftp_file
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form read_ftp_file .
+  clear gt_data.
+  gv_cmd = 'dir' .
+  call function 'FTP_COMMAND'
+    exporting
+      handle        = gv_handle
+      command       = gv_cmd
+    tables
+      data          = gt_data
+    exceptions
+      tcpip_error   = 1
+      command_error = 2
+      data_error    = 3
+      others        = 4.
+  if sy-subrc <> 0.
+    message 'FTP_COMMAND: dir is not successfully' type 'E'.
+  endif.
+
+  call function 'SAPGUI_PROGRESS_INDICATOR'
+    exporting
+      text = 'Reading Files in the Directory'.
+
+
+  if gt_data[] is not initial .
+    loop at gt_data into gs_data .
+      condense gs_data-line .
+      split gs_data-line at space into table data(lt_dir1).
+      delete lt_dir1 where table_line ns '.CSV'.
+      append lines of lt_dir1 to gt_file.
+    endloop.
+  endif.
+endform.
+*&---------------------------------------------------------------------*
+*& Form read_data_from_files
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form read_data_from_files .
+  data : lv_string type string .
+  if gt_file[] is not initial .
+    loop at gt_file into gs_file .
+      clear : gt_mdmlog, gs_mdm_data .
+      refresh : gt_mdmlog , gt_mdm_data.
+      if  gs_file-pathname(2) = 'CR' or gs_file-pathname(2) = 'Cr' or gs_file-pathname(2) = 'cr' or
+          gs_file-pathname(2) = 'UP' or gs_file-pathname(2) = 'Up' or gs_file-pathname(2) = 'up' or
+          gs_file-pathname(2) = 'EX' or gs_file-pathname(2) = 'Ex' or gs_file-pathname(2) = 'ex'.
+        g_filenm  = gs_file-pathname."pathname .
+        call function 'FTP_SERVER_TO_R3'
+          exporting
+            handle         = gv_handle
+            fname          = g_filenm
+            character_mode = 'X'
+          tables
+            text           = gt_mdmlog
+          exceptions
+            tcpip_error    = 1
+            command_error  = 2
+            data_error     = 3
+            others         = 4.
+        if sy-subrc <> 0.
+* Implement suitable error handling here
+          data(lv_msg) = | && 'FTP Read File Error' && { g_filenm }|.
+          message lv_msg type 'S'.
+          continue . "Process next file b'coz of error
+        endif.
+
+        if gt_mdmlog is not initial .
+          delete gt_mdmlog where field is initial .
+          delete gt_mdmlog index 1 .
+          loop at gt_mdmlog into gs_mdmlog .
+            concatenate gs_ftp-ls_infilet1 gs_mdmlog-field into gs_ftp-ls_infilet1 .
+            replace all occurrences of '|' in gs_ftp-ls_infilet1 with c_comma .
+            condense gs_ftp-ls_infilet1 .
+            append gs_ftp to gt_ftp .
+            clear : gs_ftp, gs_mdmlog .
+          endloop.
+        endif.
+      endif.
+    endloop.
+  endif .
+
+  if gt_ftp is initial.
+    message 'No files at FTP' type 'E'.
+    leave list-processing.
+    exit.
+  endif.
+
+  clear gs_ftp .
+  perform ftp_disconnect.
+  perform read_ftp_data_to_int.     " FTP Data to Internal Table
+  perform ftp_connect .
+
+
+  loop at gt_file into gs_file .
+
+    data : file_bs  type string,
+           file_ext type string.
+
+    get time stamp field data(ts) .
+*    lv_f1  = cond #( when sy-sysid = 'WEP' then '/Welspun_MDM/PROD/WEL/MATERIAL/INPUT/'
+*                     when sy-sysid = 'WEQ' then '/Welspun_MDM/QA/WEL/MATERIAL/INPUT/'
+*                     when sy-sysid = 'WED' then '/Welspun_MDM/DEV/WEL/MATERIAL/INPUT/'  ).
+*
+*    lv_f2  = cond #( when sy-sysid = 'WEP' then '/Welspun_MDM/PROD/WEL/ARCHIVE/MATERIAL/Archive/'
+*                     when sy-sysid = 'WEQ' then '/Welspun_MDM/QA/WEL/ARCHIVE/MATERIAL/Archive/'
+*                     when sy-sysid = 'WED' then '/Welspun_MDM/DEV/WEL/ARCHIVE/MATERIAL/Archive/' ).
+    lv_f1  = cond #( when sy-sysid = 'WED' then '/Welspun_MDM/DEV/WEL_HANA/MATERIAL_REQUEST/INPUT/'
+                      when sy-sysid = 'WEQ' then '/Welspun_MDM/QA/WEL_HANA/MATERIAL_REQUEST/INPUT/'
+                      when sy-sysid = 'WEP' then '/Welspun_MDM/PROD/WEL_HANA/MATERIAL_REQUEST/INPUT/' ).
+
+    lv_f2  = cond #( when sy-sysid = 'WEP' then '/Welspun_MDM/PROD/WEL_HANA/Archive/MATERIAL_REQUEST/'
+                     when sy-sysid = 'WEQ' then '/Welspun_MDM/QA/WEL_HANA/Archive/MATERIAL_REQUEST/'
+                     when sy-sysid = 'WED' then '/Welspun_MDM/DEV/WEL_HANA/Archive/MATERIAL_REQUEST/' ).
+
+    condense : lv_f1,lv_f2.
+    lv_file1 = lv_f1 && gs_file-pathname .
+    lv_file2 = lv_f2 && gs_file-pathname .
+
+    condense : lv_file1 , lv_file2.
+    split gs_file-pathname at  c_dot
+          into file_bs file_ext
+          in character mode  .
+
+    file_bs = file_bs && '_' && ts && '.csv' .
+
+    clear : lv_file2 .
+
+    lv_file2 = lv_f2 && file_bs .
+
+
+    concatenate 'rename' lv_file1 lv_file2 into gv_cmd separated by space .
+
+    call function 'FTP_COMMAND'
+      exporting
+        handle        = gv_handle
+        command       = gv_cmd
+      tables
+        data          = gt_result
+      exceptions
+        tcpip_error   = 1
+        command_error = 2
+        data_error    = 3
+        others        = 4.
+    if sy-subrc <> 0.
+      lv_msg = |FTP_COMMAND { gv_cmd } is not sucessfull|.
+      message lv_msg type 'E'.
+    endif.
+*    lv_f1  = cond #( when sy-sysid = 'WEP' then '/Welspun_MDM/PROD/WEL/MATERIAL/INPUT/'
+*                     when sy-sysid = 'WED' then '/Welspun_MDM/DEV/WEL/MATERIAL/INPUT/'
+*                     when sy-sysid = 'WEQ' then '/Welspun_MDM/QA/WEL/MATERIAL/INPUT/' ).
+    lv_f1  = cond #( when sy-sysid = 'WED' then '/Welspun_MDM/DEV/WEL_HANA/MATERIAL_REQUEST/INPUT/'
+                     when sy-sysid = 'WEQ' then '/Welspun_MDM/QA/WEL_HANA/MATERIAL_REQUEST/INPUT/'
+                     when sy-sysid = 'WEP' then '/Welspun_MDM/QA/WEL_HANA/MATERIAL_REQUEST/INPUT/' ).
+
+    concatenate 'cd' lv_f1 into gv_cmd separated by space .
+    call function 'FTP_COMMAND'
+      exporting
+        handle        = gv_handle
+        command       = gv_cmd
+      tables
+        data          = gt_result
+      exceptions
+        tcpip_error   = 1
+        command_error = 2
+        data_error    = 3
+        others        = 4.
+    if sy-subrc <> 0.
+      lv_msg = |FTP_COMMAND { gv_cmd } is not sucessfull|.
+      message lv_msg type 'E'.
+    endif.
+    wait up to 1 seconds .
+    clear : gs_ftp , lv_f1, lv_f2, lv_file1, lv_file2, gs_file.
+  endloop.
+
+  perform ftp_disconnect .
+  perform log_display.
+endform.
+*&---------------------------------------------------------------------*
+*& Form ftp_disconnect
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form ftp_disconnect .
+  call function 'FTP_DISCONNECT'
+    exporting
+      handle = gv_handle.
+
+  call function 'RFC_CONNECTION_CLOSE' ##FM_SUBRC_OK
+    exporting
+      destination = gv_rfc
+    exceptions
+      others      = 1.
+endform.
+*&---------------------------------------------------------------------*
+*& Form read_ftp_data_to_int
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form read_ftp_data_to_int .
+  data lv_string type string .
+  data lv_function type bapifn.
+  clear gs_ftp .
+
+  loop at gt_ftp into gs_ftp .
+    if gs_ftp-ls_infilet1 is not initial .
+*     Split into the respective columns before that define strucure with respective field lengths.
+
+      data(lv_len) = strlen( gs_ftp-ls_infilet1 ) .
+      data(lv_offset) = lv_len - 1 .
+      data(lv_var) = gs_ftp-ls_infilet1+lv_offset(1) .
+      if lv_var eq c_comma .
+        clear lv_string .
+        lv_string = gs_ftp-ls_infilet1+0(lv_offset) .
+      endif.
+      if lv_string is initial .
+        lv_string = gs_ftp-ls_infilet1 .
+      endif.
+      split gs_ftp-ls_infilet1 at c_comma into table data(lt_temp).
+      describe table lt_temp lines data(lv_count).
+      if lv_count lt 19.
+        split lv_string at c_comma into gs_mdm_data-request_id
+                                        gs_mdm_data-plant
+                                        gs_mdm_data-mat_type
+                                        gs_mdm_data-hsn_code
+                                        gs_mdm_data-val_class
+                                        gs_mdm_data-mat_group
+                                        gs_mdm_data-batch_manage
+                                        gs_mdm_data-manf_part_no
+                                        gs_mdm_data-old_mat_code
+                                        gs_mdm_data-mat_desc
+                                        gs_mdm_data-po_text
+                                        gs_mdm_data-ext_mat_group
+                                        gs_mdm_data-moving_price
+                                        gs_mdm_data-base_unit
+                                        gs_mdm_data-abc_indicator
+                                        gs_mdm_data-qa_insp_setup
+                                        gs_mdm_data-mdm_create_flag
+                                        gs_mdm_data-mdm_update_flag
+                                        gs_mdm_data-mdm_delete_flag
+                                        in character mode .
+      else.
+        split lv_string at c_comma into gs_mdm_data-request_id
+                                        gs_mdm_data-sap_code
+                                        gs_mdm_data-plant
+                                        gs_mdm_data-mat_type
+                                        gs_mdm_data-hsn_code
+                                        gs_mdm_data-val_class
+                                        gs_mdm_data-mat_group
+                                        gs_mdm_data-batch_manage
+                                        gs_mdm_data-manf_part_no
+                                        gs_mdm_data-old_mat_code
+                                        gs_mdm_data-mat_desc
+                                        gs_mdm_data-po_text
+                                        gs_mdm_data-ext_mat_group
+                                        gs_mdm_data-moving_price
+                                        gs_mdm_data-base_unit
+                                        gs_mdm_data-abc_indicator
+                                        gs_mdm_data-qa_insp_setup
+                                        gs_mdm_data-mdm_create_flag
+                                        gs_mdm_data-mdm_update_flag
+                                        gs_mdm_data-mdm_delete_flag
+                                        in character mode .
+      endif.
+      append gs_mdm_data to gt_mdm_data.
+      clear : gs_mdm_data, gs_ftp, lv_string.
+    endif.
+  endloop.
+
+  select matnr meins matkl mtart from mara into table gt_mara for all entries in gt_mdm_data where matnr = gt_mdm_data-sap_code.
+  if sy-subrc = 0.
+    sort gt_mara by matnr.
+    select matnr werks from marc into table gt_marc for all entries in gt_mara where matnr = gt_mara-matnr.
+    if sy-subrc = 0.
+      sort gt_marc by matnr.
+    endif.
+  endif.
+  loop at gt_mdm_data into gs_mdm_data .
+    shift gs_mdm_data-abc_indicator left deleting leading '0'.
+    if gs_mdm_data-sap_code is initial.
+      lv_function = 'INS'.
+    else.
+      if gs_mdm_data-mdm_create_flag = '2'.  " Extend
+        lv_function = 'INS'.
+      elseif gs_mdm_data-mdm_update_flag = '1'. " Update
+        lv_function = 'UPD'.
+      endif.
+    endif.
+    if lv_function = 'INS'.
+      perform create_extend_material using lv_function.
+    elseif lv_function = 'UPD'.
+      perform change_material using lv_function.
+    endif.
+  endloop.
+endform.
+*&---------------------------------------------------------------------*
+*& Form create_material
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form create_extend_material using p_function type bapifn.
+  data : headdata                type table of bapie1matheader,
+         clientdata              type table of bapie1mara,
+         ls_clientdata           type bapie1mara,
+         clientdatax             type table of bapie1marax,
+         ls_clientdatax          type bapie1marax,
+         plantdata               type table of bapie1marc,
+         ls_plantdata            type bapie1marc,
+         plantdatax              type table of bapie1marcx,
+         ls_plantdatax           type bapie1marcx,
+         storagelocationdata     type table of bapie1mard,
+         ls_storagelocationdata  type bapie1mard,
+         storagelocationdatax    type table of bapie1mardx,
+         ls_storagelocationdatax type  bapie1mardx,
+         valuationdata           type table of bapie1mbew,
+         ls_valuationdata        type bapie1mbew,
+         valuationdatax          type table of bapie1mbewx,
+         ls_valuationdatax       type bapie1mbewx,
+         salesdata               type table of   bapie1mvke,
+         salesdatax              type table of  bapie1mvkex,
+         ls_salesdatax           type bapie1mvkex,
+         materialdescription     type table of bapie1makt,
+         taxclassifications      type table of  bapie1mlan,
+         materiallongtext        type table of  bapie1mltx,
+         unitsofmeasure          type table of  bapie1marm,
+         unitsofmeasurex         type table of bapie1marmx,
+         return                  type bapiret2.
+
+  data : lv_mtart        type bapimatdoa-matl_type,
+         material_number type table of bapimatinr.
+
+  refresh : headdata, clientdata, clientdatax, plantdata, plantdatax,
+            storagelocationdata, storagelocationdatax, materiallongtext, material_number.
+
+  clear : ls_clientdata, ls_clientdatax, ls_plantdata, ls_plantdatax,
+          ls_storagelocationdata, ls_storagelocationdatax, return, gs_return, lv_mtart.
+
+  perform op_file_header.
+
+  if p_function = 'INS'.
+    if gs_mdm_data-sap_code is initial.
+      lv_mtart = gs_mdm_data-mat_type.
+      call function 'BAPI_MATERIAL_GETINTNUMBER'  "#EC CI_USAGE_OK[2438131]
+        exporting
+          material_type   = lv_mtart
+          industry_sector = 'M'
+        tables
+          material_number = material_number.
+
+      data(ls_material_number) = material_number[ 1 ].
+    else.
+      data(gs_mara) = value #( gt_mara[ matnr = gs_mdm_data-sap_code ] optional ).
+      ls_material_number-material = |{ gs_mdm_data-sap_code alpha = in }|.
+      gs_mdm_data-mat_type = gs_mara-mtart.
+      gs_mdm_data-base_unit = gs_mara-meins.
+    endif.
+  elseif p_function = 'UPD'.
+    ls_material_number-material = |{ gs_mdm_data-sap_code alpha = in }|.
+  endif.
+  data(ls_views) = value #( gt_views[ mtart = gs_mdm_data-mat_type ] optional ).
+  headdata = value #( ( function        = p_function " 'INS'
+                        material        = ls_material_number-material
+                        ind_sector      = 'M'
+                        matl_type       = ls_views-mtart
+                        basic_view      = ls_views-v_basic
+                        sales_view      = ls_views-v_sales
+                        purchase_view   = ls_views-v_purch
+                        mrp_view        = ls_views-v_mrp
+                        forecast_view   = ls_views-v_forca
+                        work_sched_view = ls_views-v_worksc
+                        prt_view        = ls_views-v_prt
+                        storage_view    = ls_views-v_storag
+                        warehouse_view  = ls_views-v_ware
+                        quality_view    = ls_views-v_qual
+                        account_view    = ls_views-v_acnt
+                        cost_view       = ls_views-v_cost    ) ).
+
+  " Plant Master Data
+  data(ls_mdm_plant) = value #( gt_mdm_plant[ plant = gs_mdm_data-plant
+                                              matl_type = gs_mdm_data-mat_type ] optional ).
+  " Client Data
+  clientdata = value #( ( function = p_function
+                          material = ls_material_number-material
+                          old_mat_no = gs_mdm_data-old_mat_code
+                          matl_group = gs_mdm_data-mat_group
+                          base_uom   = gs_mdm_data-base_unit
+                          batch_mgmt = cond #( when gs_mdm_data-batch_manage <> 'NA' then abap_true else abap_false )
+                          manu_mat   = gs_mdm_data-manf_part_no
+                          extmatlgrp = gs_mdm_data-ext_mat_group
+                          trans_grp  = ls_mdm_plant-trans_grp
+                          pur_valkey = ls_mdm_plant-pur_valkey
+                          qm_procmnt = cond #( when gs_mdm_data-qa_insp_setup = 'Y' then abap_true else abap_false )
+                          dsn_office = ' '
+                          division   = ls_mdm_plant-division
+                          mat_grp_sm = ls_mdm_plant-mat_grp_sm
+                          minremlife = ls_mdm_plant-minremlife
+                          unit_of_wt = ls_mdm_plant-unit_of_wt
+                          item_cat   = ls_mdm_plant-item_cat_g
+                          sh_mat_typ = ls_mdm_plant-sh_mat_typ ) ).
+
+  clientdatax = value #( for client in clientdata ( function = p_function
+                          material = ls_material_number-material
+*                          material_long = abap_true
+                          old_mat_no = cond #( when client-old_mat_no  is not initial then abap_true else abap_false )
+                          matl_group = cond #( when client-matl_group  is not initial then abap_true else abap_false )
+                          base_uom   = cond #( when client-base_uom    is not initial then abap_true else abap_false )
+                          batch_mgmt = cond #( when client-batch_mgmt  is not initial then abap_true else abap_false )
+                          manu_mat   = cond #( when client-manu_mat    is not initial then abap_true else abap_false )
+                          extmatlgrp = cond #( when client-extmatlgrp  is not initial then abap_true else abap_false )
+                          trans_grp  = cond #( when client-trans_grp   is not initial then abap_true else abap_false )
+                          pur_valkey = cond #( when client-pur_valkey  is not initial then abap_true else abap_false )
+                          qm_procmnt = cond #( when client-qm_procmnt  is not initial then abap_true else abap_false )
+                          dsn_office = cond #( when client-dsn_office  is not initial then abap_true else abap_false )
+                          division   = cond #( when client-division    is not initial then abap_true else abap_false )
+                          mat_grp_sm = cond #( when client-mat_grp_sm  is not initial then abap_true else abap_false )
+                          minremlife = cond #( when client-minremlife  is not initial then abap_true else abap_false )
+                          unit_of_wt = cond #( when client-unit_of_wt  is not initial then abap_true else abap_false )
+                          item_cat   = cond #( when client-item_cat    is not initial then abap_true else abap_false )
+                          sh_mat_typ = cond #( when client-sh_mat_typ  is not initial then abap_true else abap_false ) ) ).
+
+*--------------------------------------------------------------------*
+  " Plant Data
+  plantdata = value #( ( function               = p_function
+                         material               = ls_material_number-material
+*                         material_long          = ls_material_number-material
+                         plant                  = gs_mdm_data-plant
+                         abc_id                 = cond #( when gs_mdm_data-abc_indicator <> 'NA' then gs_mdm_data-abc_indicator else '' )
+                         pur_group              = ls_mdm_plant-pur_group
+                         mrp_type               = ls_mdm_plant-mrp_type
+                         lotsizekey             = ls_mdm_plant-lotsizekey
+                         mrp_ctrler             = ls_mdm_plant-mrp_ctrler
+                         profit_ctr             = ls_mdm_plant-profit_ctr
+                         availcheck             = ls_mdm_plant-availcheck
+                         loadinggrp             = ls_mdm_plant-loadinggrp
+                         ctrl_code              = gs_mdm_data-hsn_code
+                         ctrl_key               = cond #( when gs_mdm_data-qa_insp_setup = 'Y' or gs_mdm_data-mdm_create_flag = '2' then ls_mdm_plant-ctrl_key )
+                         ind_post_to_insp_stock = ls_mdm_plant-ind_post_to_insp_stock
+                         lot_size               = '1'
+                         variance_key           = '000001'
+                         no_costing             = ls_mdm_plant-no_costing
+                         period_ind             = ls_mdm_plant-period_ind
+                         mrp_group              = ls_mdm_plant-mrp_group
+                         plan_strgp             = ls_mdm_plant-plan_strgp
+                         proc_type              = ls_mdm_plant-proc_type
+                         sm_key                 = ls_mdm_plant-sm_key
+                         backflush              = ls_mdm_plant-backflush
+                         plnd_delry             = ls_mdm_plant-plnd_delry
+                         gr_pr_time             = ls_mdm_plant-gr_pr_time
+                         dep_req_id             = ls_mdm_plant-dep_req_id
+                         cert_type              = ls_mdm_plant-cert_type
+                         consummode             = ls_mdm_plant-consummode
+                         bwd_cons               = ls_mdm_plant-bwd_cons
+                         fwd_cons               = ls_mdm_plant-fwd_cons
+                         serno_prof             = ls_mdm_plant-serno_prof
+                         sales_view             = ls_mdm_plant-sales_view
+                         purch_view             = ls_views-v_purch
+                         mrp_view               = ls_views-v_mrp
+                         forecast_view          = ls_views-v_forca
+                         work_sched_view        = ls_views-v_worksc
+                         prt_view               = ls_views-v_prt
+                         storage_view           = ls_views-v_storag
+                         warehouse_view         = ls_views-v_ware
+                         quality_view           = ls_views-v_qual
+                         account_view           = ls_views-v_acnt
+                         cost_view              = ls_views-v_cost ) ).
+
+  plantdatax = value #( for plant in plantdata ( function               = p_function
+                                                 material               = ls_material_number-material
+*                                                 material_long          = abap_true
+                                                 plant                  = gs_mdm_data-plant
+                                                 abc_id     = cond #( when plant-abc_id     is not initial then abap_true else abap_false )
+                                                 pur_group  = cond #( when plant-pur_group  is not initial then abap_true else abap_false )
+                                                 mrp_type   = cond #( when plant-mrp_type   is not initial then abap_true else abap_false )
+                                                 lotsizekey = cond #( when plant-lotsizekey is not initial then abap_true else abap_false )
+                                                 mrp_ctrler = cond #( when plant-mrp_ctrler is not initial then abap_true else abap_false )
+                                                 profit_ctr = cond #( when plant-profit_ctr is not initial then abap_true else abap_false )
+                                                 availcheck = cond #( when plant-availcheck is not initial then abap_true else abap_false )
+                                                 loadinggrp = cond #( when plant-loadinggrp is not initial then abap_true else abap_false )
+                                                 ctrl_code  = cond #( when plant-ctrl_code  is not initial then abap_true else abap_false )
+                                                 ctrl_key   = cond #( when plant-ctrl_key   is not initial then abap_true else abap_false )
+                                                 ind_post_to_insp_stock = cond #( when plant-ind_post_to_insp_stock is not initial then abap_true else abap_false )
+                                                 lot_size     = cond #( when plant-lot_size     is not initial then abap_true else abap_false )
+                                                 variance_key = cond #( when plant-variance_key is not initial then abap_true else abap_false )
+                                                 no_costing   = cond #( when plant-no_costing   is not initial then abap_true else abap_false )
+                                                 period_ind   = cond #( when plant-period_ind   is not initial then abap_true else abap_false )
+                                                 mrp_group    = cond #( when plant-mrp_group    is not initial then abap_true else abap_false )
+                                                 plan_strgp   = cond #( when plant-plan_strgp   is not initial then abap_true else abap_false )
+                                                 proc_type    = cond #( when plant-proc_type    is not initial then abap_true else abap_false )
+                                                 sm_key       = cond #( when plant-sm_key       is not initial then abap_true else abap_false )
+                                                 backflush    = cond #( when plant-backflush    is not initial then abap_true else abap_false )
+                                                 plnd_delry   = cond #( when plant-plnd_delry   is not initial then abap_true else abap_false )
+                                                 gr_pr_time   = cond #( when plant-gr_pr_time   is not initial then abap_true else abap_false )
+                                                 dep_req_id   = cond #( when plant-dep_req_id   is not initial then abap_true else abap_false )
+                                                 cert_type    = cond #( when plant-cert_type    is not initial then abap_true else abap_false )
+                                                 consummode   = cond #( when plant-consummode   is not initial then abap_true else abap_false )
+                                                 bwd_cons     = cond #( when plant-bwd_cons     is not initial then abap_true else abap_false )
+                                                 fwd_cons     = cond #( when plant-fwd_cons     is not initial then abap_true else abap_false )
+                                                 serno_prof   = cond #( when plant-serno_prof   is not initial then abap_true else abap_false )
+                                                 ) ).
+
+*--------------------------------------------------------------------*
+  " Storage Location
+  select werks, lgort from t001l into table @data(lt_t001l) where werks = @gs_mdm_data-plant.
+
+  storagelocationdata = value #( for ls_t001l in lt_t001l ( function = p_function
+                                                            material = ls_material_number-material
+                                                            plant = ls_t001l-werks
+                                                           stge_loc = ls_t001l-lgort ) ).
+  storagelocationdatax = value #( for ls_t001l in lt_t001l ( function = p_function
+                                                            material = ls_material_number-material
+                                                            plant = ls_t001l-werks
+                                                            stge_loc = ls_t001l-lgort ) ).
+
+*--------------------------------------------------------------------*
+  " Valuation Data
+  ls_valuationdata-function = p_function.
+  ls_valuationdatax-function = p_function.
+
+  ls_valuationdata-material = ls_material_number-material.
+  ls_valuationdatax-material = ls_material_number-material.
+
+  ls_valuationdata-val_area = gs_mdm_data-plant.
+  ls_valuationdatax-val_area = gs_mdm_data-plant.
+
+*  ls_valuationdata-val_type = gs_mdm_data-val_type.
+*  ls_valuationdatax-val_type = gs_mdm_data-val_type.
+
+  if gs_mdm_data-val_class <> 'NOT APPLICABLE'.
+    ls_valuationdata-val_class = gs_mdm_data-val_class.
+    if ls_valuationdata-val_class is not initial.
+      ls_valuationdatax-val_class = abap_true.
+    endif.
+  endif.
+
+  ls_valuationdata-moving_pr = gs_mdm_data-moving_price.
+  if ls_valuationdata-moving_pr is not initial.
+    ls_valuationdatax-moving_pr = abap_true.
+  endif.
+
+  if gs_mdm_data-mat_type = 'ZFRT' and ( gs_mdm_data-plant = '7002' or gs_mdm_data-plant = '7003' ).
+    ls_valuationdata-ml_settle = '3'.
+    ls_valuationdatax-ml_settle = abap_true.
+  else.
+    ls_valuationdata-ml_settle = '2'.
+    ls_valuationdatax-ml_settle = abap_true.
+  endif.
+  ls_valuationdata-orig_mat = ls_mdm_plant-orig_mat. " abap_true.
+  if ls_valuationdata-orig_mat is not initial.
+    ls_valuationdatax-orig_mat = abap_true.
+  endif.
+
+  ls_valuationdata-qty_struct = ''.
+  ls_valuationdatax-qty_struct = abap_true.
+
+  ls_valuationdata-val_cat = ls_mdm_plant-val_cat.
+  if ls_valuationdata-val_cat is not initial.
+    ls_valuationdatax-val_cat = abap_true.
+  endif.
+
+  ls_valuationdata-price_ctrl = ls_mdm_plant-price_ctrl.
+  if ls_valuationdata-price_ctrl is not initial.
+    ls_valuationdatax-price_ctrl = abap_true.
+  endif.
+
+  ls_valuationdata-account_view = ls_views-v_acnt.
+  ls_valuationdata-cost_view = ls_views-v_cost.
+
+
+  append ls_valuationdata to valuationdata.
+  append ls_valuationdatax to valuationdatax.
+*--------------------------------------------------------------------*
+  " Sales Data
+  salesdata = value #( for ls_vkorg in gt_sales_area where ( werks = gs_mdm_data-plant )
+                       ( function   = p_function
+                         material   = ls_material_number-material
+                         sales_org  = ls_vkorg-vkorg
+                         distr_chan = ls_vkorg-vtweg
+                         item_cat   = ls_mdm_plant-item_cat " 'NORM'
+                         acct_assgt = ls_mdm_plant-acct_assgt
+                         matl_stats = ls_mdm_plant-matl_stats
+                         delyg_plnt = ls_mdm_plant-delyg_plnt
+                         mat_pr_grp = ls_mdm_plant-mat_pr_grp
+                         pr_ref_mat = ls_mdm_plant-pr_ref_mat
+                         matl_grp_1 = ls_mdm_plant-matl_grp_1 ) ).
+
+  salesdatax = value #( for ls_salesdata in salesdata ( function = p_function
+                                                        material = ls_material_number-material
+                                                        sales_org = ls_salesdata-sales_org
+                                                        distr_chan = ls_salesdata-distr_chan
+                                                        item_cat   = cond #( when ls_salesdata-item_cat   is not initial then abap_true else abap_false )
+                                                        acct_assgt = cond #( when ls_salesdata-acct_assgt is not initial then abap_true else abap_false )
+                                                        matl_stats = cond #( when ls_salesdata-matl_stats is not initial then abap_true else abap_false )
+                                                        delyg_plnt = cond #( when ls_salesdata-delyg_plnt is not initial then abap_true else abap_false )
+                                                        mat_pr_grp = cond #( when ls_salesdata-mat_pr_grp is not initial then abap_true else abap_false )
+                                                        pr_ref_mat = cond #( when ls_salesdata-pr_ref_mat is not initial then abap_true else abap_false )
+                                                        matl_grp_1 = cond #( when ls_salesdata-matl_grp_1 is not initial then abap_true else abap_false )
+                                                        ) ).
+*--------------------------------------------------------------------*
+  " Material Description
+  materialdescription = value #( ( function = p_function
+                                   material = ls_material_number-material
+                                   langu    = sy-langu
+                                   matl_desc = gs_mdm_data-mat_desc ) ).
+*--------------------------------------------------------------------*
+  " Tax Classification
+*  select land1, taxim from tmkm1 into table @data(lt_tmkm1) where land1 = 'IN' and taxim = '1'.
+*  taxclassifications = value #( for ls_tmkm1 in lt_tmkm1 ( function = 'INS'
+  taxclassifications = value #( ( function = p_function
+                                  material = ls_material_number-material
+                                  depcountry = ls_mdm_plant-depcountry    " ls_tmkm1-land1
+                                  tax_type_1 = ls_mdm_plant-tax_type_1    " 'JOCG'
+                                  taxclass_1 = ls_mdm_plant-taxclass_1    " '1'
+                                  tax_type_2 = ls_mdm_plant-tax_type_2    " 'JOSG'
+                                  taxclass_2 = ls_mdm_plant-taxclass_2    " '1'
+                                  tax_type_3 = ls_mdm_plant-tax_type_3    " 'JOIG'
+                                  taxclass_3 = ls_mdm_plant-taxclass_3    " '1'
+                                  tax_type_4 = ls_mdm_plant-tax_type_4    " 'JTC1'
+                                  taxclass_4 = ls_mdm_plant-taxclass_4    " '1'
+                                  tax_type_5 = ls_mdm_plant-tax_type_5
+                                  taxclass_5 = ls_mdm_plant-taxclass_5
+                                  tax_type_6 = ls_mdm_plant-tax_type_6
+                                  taxclass_6 = ls_mdm_plant-taxclass_6
+                                  tax_type_7 = ls_mdm_plant-tax_type_7
+                                  taxclass_7 = ls_mdm_plant-taxclass_7
+                                  tax_type_8 = ls_mdm_plant-tax_type_8
+                                  taxclass_8 = ls_mdm_plant-taxclass_8
+                                  tax_type_9 = ls_mdm_plant-tax_type_9
+                                  taxclass_9 = ls_mdm_plant-taxclass_9
+                                  tax_ind    = ls_mdm_plant-tax_ind  ) ).      " ls_tmkm1-taxim
+
+  " Purchase Long Text
+  materiallongtext = value #( ( function = p_function
+                                material = ls_material_number-material
+                                applobject = ls_mdm_plant-applobject " 'MATERIAL'
+                                text_name  = ls_material_number-material
+                                text_id    = ls_mdm_plant-text_id    " 'BEST'
+                                langu      = ls_mdm_plant-langu      " sy-langu
+                                text_line  = gs_mdm_data-po_text ) ).
+
+  " Unit Of Measures
+  unitsofmeasure = value #( ( function = p_function
+                              material = ls_material_number-material
+                              alt_unit = gs_mdm_data-base_unit
+                              numerator = ls_mdm_plant-numerator
+                              denominatr = ls_mdm_plant-denominatr ) ).
+
+  unitsofmeasurex = value #( for ls_unit in unitsofmeasure ( function = p_function
+                                                             material = ls_material_number-material
+                                                             alt_unit = gs_mdm_data-base_unit
+                                                             numerator = cond #( when ls_unit-numerator is not initial
+                                                                                 then abap_true
+                                                                                 else abap_false )
+                                                             denominatr = cond #( when ls_unit-denominatr is not initial
+                                                                                 then abap_true
+                                                                                 else abap_false ) ) ).
+  call function 'BAPI_MATERIAL_SAVEREPLICA'    "#EC CI_USAGE_OK[2438131]
+    exporting
+      noappllog            = abap_true
+      nochangedoc          = abap_true
+      testrun              = abap_false
+      inpfldcheck          = 'W'
+*     FLAG_CAD_CALL        = ' '
+*     NO_ROLLBACK_WORK     = ' '
+*     FLAG_ONLINE          = ' '
+    importing
+      return               = gs_return
+    tables
+      headdata             = headdata
+      clientdata           = clientdata
+      clientdatax          = clientdatax
+      plantdata            = plantdata
+      plantdatax           = plantdatax
+      storagelocationdata  = storagelocationdata
+      storagelocationdatax = storagelocationdatax
+      valuationdata        = valuationdata
+      valuationdatax       = valuationdatax
+      salesdata            = salesdata
+      salesdatax           = salesdatax
+      materialdescription  = materialdescription
+      taxclassifications   = taxclassifications
+      materiallongtext     = materiallongtext
+      unitsofmeasure       = unitsofmeasure
+      unitsofmeasurex      = unitsofmeasurex.
+
+  if gs_return-type = 'E'.
+    call function 'BAPI_TRANSACTION_ROLLBACK'.
+    append gs_return to gt_return.
+    perform update_opnstatus.
+  else.
+    data: lt_inspection type standard table of bapi1001004_qmat,
+          ls_inspection type bapi1001004_qmat,
+          lt_return     type standard table of bapiret2.
+    refresh : lt_inspection, lt_return.
+    clear: ls_inspection.
+    call function 'BAPI_TRANSACTION_COMMIT'
+      exporting
+        wait = 'X'.
+    wait up to 2 seconds .
+    clear g_matnr.
+*    move gs_return-message_v1 to g_matnr.
+    move ls_material_number-material to g_matnr.
+    if gs_return-number = '810'.
+      if p_function = 'INS'.
+        if gs_mdm_data-mdm_create_flag = '1'.
+          gs_return-number = '800'.
+          gs_return-message = |Material| && | { g_matnr } | && |created|.
+          gs_return-message_v1 = |{ g_matnr alpha = out }|.
+        elseif gs_mdm_data-mdm_create_flag = '2'.
+          gs_return-number = '800'.
+          gs_return-message = |Material| && | { g_matnr } | && |extended|.
+          gs_return-message_v1 = |{ g_matnr alpha = out }|.
+        endif.
+      elseif p_function = 'UPD'.
+        gs_return-number = '801'.
+        gs_return-message = |Material| && | { g_matnr } | && |changed|.
+        gs_return-message_v1 = |{ g_matnr alpha = out }|.
+      endif.
+    endif.
+    append gs_return to gt_return.
+    if gs_mdm_data-qa_insp_setup = 'Y'.
+      split ls_mdm_plant-insptype at ',' into data(lv_01) data(lv_89) data(lv_09).
+      lt_inspection = value #( ( function                  = '009'
+                                 material                  = ls_material_number-material            plant = gs_mdm_data-plant
+                                 insptype                  = lv_01                                  ind_post_to_insp_stock = ls_mdm_plant-ind_post_to_insp_stock  ind_insptype_mat_active = ls_mdm_plant-ind_insptype_mat_active
+                                 preferred_insptype        = 'X'                                    ind_insp_with_tsk_list = ls_mdm_plant-ind_insp_with_tsk_list  ind_auto_assign         = ls_mdm_plant-ind_auto_assign
+                                 ind_insp_by_charac        = ls_mdm_plant-ind_insp_by_charac        ind_automatic_ud       = ls_mdm_plant-ind_automatic_ud        ind_skips_allowed         = ls_mdm_plant-ind_skips_allowed
+                                 ind_single_units_possible = ls_mdm_plant-ind_single_units_possible qual_score_procedure   = ls_mdm_plant-qual_score_procedure  )
+
+                               ( function                  = '009'
+                                 material                  = ls_material_number-material            plant = gs_mdm_data-plant
+                                 insptype                  = lv_89                                  ind_post_to_insp_stock = ls_mdm_plant-ind_post_to_insp_stock  ind_insptype_mat_active = ls_mdm_plant-ind_insptype_mat_active
+                                 preferred_insptype        = 'X'                                    ind_insp_with_tsk_list = ls_mdm_plant-ind_insp_with_tsk_list  ind_auto_assign         = ls_mdm_plant-ind_auto_assign
+                                 ind_insp_by_charac        = ls_mdm_plant-ind_insp_by_charac        ind_automatic_ud       = ls_mdm_plant-ind_automatic_ud        ind_skips_allowed         = ls_mdm_plant-ind_skips_allowed
+                                 ind_single_units_possible = ls_mdm_plant-ind_single_units_possible qual_score_procedure   = ls_mdm_plant-qual_score_procedure  )
+
+                               ( function                  = '009'
+                                 material                  = ls_material_number-material            plant = gs_mdm_data-plant
+                                 insptype                  = lv_09                                  ind_post_to_insp_stock = ls_mdm_plant-ind_post_to_insp_stock  ind_insptype_mat_active = ls_mdm_plant-ind_insptype_mat_active
+                                 preferred_insptype        = 'X'                                    ind_insp_with_tsk_list = ls_mdm_plant-ind_insp_with_tsk_list  ind_auto_assign         = ls_mdm_plant-ind_auto_assign
+                                 ind_insp_by_charac        = ls_mdm_plant-ind_insp_by_charac        ind_automatic_ud       = ls_mdm_plant-ind_automatic_ud        ind_skips_allowed         = ls_mdm_plant-ind_skips_allowed
+                                 ind_single_units_possible = ls_mdm_plant-ind_single_units_possible qual_score_procedure   = ls_mdm_plant-qual_score_procedure   )
+                                 ).
+      delete lt_inspection where insptype is initial.
+
+      call function 'BAPI_MATINSPCTRL_SAVEREPLICA'  "#EC CI_USAGE_OK[2438131]
+        tables
+          return         = lt_return
+          inspectionctrl = lt_inspection.
+      if line_exists( lt_return[ type = 'E' ] ).
+      else.
+        call function 'BAPI_TRANSACTION_COMMIT'
+          exporting
+            wait = 'X'.
+        wait up to 2 seconds .
+        append lines of lt_return to gt_return.
+      endif.
+    endif.
+    perform update_opnstatus.
+  endif.
+
+  if p_file is initial.
+    perform ftp_connect .
+    perform post_optoftp.
+    perform ftp_disconnect .
+  endif.
+endform.
+*&---------------------------------------------------------------------*
+*& Form post_optoftp
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form post_optoftp .
+  data : lt_text(4096)    type c occurs 0,
+         lt_text1(4096)   type c occurs 0,
+         lv_filename(255) type c,
+         lv_path(255)     type c,
+         lv_cmd(255)      type c,
+         lv_result        type table of text with header line,
+         lv_sep           type char01.
+
+  lv_sep = '|' .
+  call function 'SAP_CONVERT_TO_CSV_FORMAT'
+    exporting
+      i_field_seperator    = lv_sep
+    tables
+      i_tab_sap_data       = gt_output_file
+    changing
+      i_tab_converted_data = lt_text
+    exceptions
+      conversion_failed    = 1
+      others               = 2.
+  if sy-subrc <> 0.
+    case sy-subrc.
+      when 1 .
+        message 'Text Conversion of Excel Data Failed' type 'E' .
+      when others.
+        message 'Error Occured While Converting the data into text Format' type 'E'.
+    endcase.
+  endif.
+
+  loop at  lt_text into data(ls_text)  .
+    replace all occurrences of ';' in ls_text with lv_sep .
+    append ls_text  to lt_text1 .
+    clear : ls_text .
+  endloop.
+
+
+*  lv_path  = cond #( when sy-sysid = 'WED' then '/Welspun_MDM/DEV/WEL/MATERIAL/OUTPUT/'
+*                     when sy-sysid = 'WEQ' then '/Welspun_MDM/QA/WEL/MATERIAL/OUTPUT/'
+*                     when sy-sysid = 'WEP' then '/Welspun_MDM/PROD/WEL/MATERIAL/OUTPUT/' ).
+  lv_path = cond #( when sy-sysid = 'WED' then '/Welspun_MDM/DEV/WEL_HANA/MATERIAL_REQUEST/OUTPUT/'
+                      when sy-sysid = 'WEQ' then '/Welspun_MDM/QA/WEL_HANA/MATERIAL_REQUEST/OUTPUT/'
+                      when sy-sysid = 'WEP' then '/Welspun_MDM/PROD/WEL_HANA/MATERIAL_REQUEST/OUTPUT/' ).
+
+  concatenate 'cd' lv_path into lv_cmd separated by space .
+  call function 'FTP_COMMAND'
+    exporting
+      handle        = gv_handle
+      command       = lv_cmd  "'PUT'
+    tables
+      data          = lv_result
+    exceptions
+      tcpip_error   = 1
+      command_error = 2
+      data_error    = 3
+      others        = 4.
+  if sy-subrc <> 0.
+    case sy-subrc .
+      when 1.
+        message 'TCP_IP ERROR' type 'E'.
+      when 2.
+        message 'COMMAND  ERROR' type 'E'.
+      when 3.
+        message 'DATA ERROR' type 'E'.
+      when others.
+        message 'ERROR OCCURED WHILE CONNECTING TO FTP SERVER' type 'E'.
+    endcase.
+  else.
+
+    data : ts1 type string .
+    get time stamp field data(ts) .
+
+    ts1 = ts .
+
+    concatenate 'Output_' gs_mdm_data-request_id '_' ts1  '.CSV'  into lv_filename  .
+*    concatenate 'Output_' gs_mdm_data-old_mat_code '_' ts1  '.CSV'  into lv_filename  .
+    call function 'FTP_R3_TO_SERVER'
+      exporting
+        handle         = gv_handle
+        fname          = lv_filename
+        character_mode = 'X'
+      tables
+        text           = lt_text1
+      exceptions
+        tcpip_error    = 1
+        command_error  = 2
+        data_error     = 3
+        others         = 4.
+
+  endif .
+endform.
+*&---------------------------------------------------------------------*
+*& Form log_display
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form log_display .
+  data:go_salv_table type ref to cl_salv_table  ##NEEDED,
+       lr_events     type ref to cl_salv_events_table ##NEEDED,
+       lo_columns    type ref to cl_salv_columns_table,
+       lo_column     type ref to cl_salv_column_list,
+       lo_display    type ref to cl_salv_display_settings, " ALV Display object
+       lo_msg        type ref to cx_salv_msg ##NEEDED,
+       lo_sort       type ref to cl_salv_sorts,
+       lo_layout     type ref to cl_salv_layout,
+       lo_functions  type ref to cl_salv_functions,
+       ls_key        type salv_s_layout_key,
+       ls_color      type lvc_s_colo.
+  constants : gc_x type char1 value 'X'.
+  data : lo_header  type ref to cl_salv_form_layout_grid,
+         lo_h_label type ref to cl_salv_form_label,
+         lo_h_flow  type ref to cl_salv_form_layout_flow,
+         lo_footer  type ref to cl_salv_form_layout_grid,
+         lo_f_label type ref to cl_salv_form_label,
+         lo_f_flow  type ref to cl_salv_form_layout_flow.
+  try.
+      cl_salv_table=>factory(
+        importing
+          r_salv_table = go_salv_table
+        changing
+          t_table      = gt_status_table ).
+    catch cx_salv_msg into lo_msg ##NO_HANDLER.
+  endtry.
+
+  " Get the reference for ALV Display Settings object
+  lo_display = go_salv_table->get_display_settings( ).
+
+  " Set striped pattern aka Zebra
+  lo_display->set_striped_pattern( if_salv_c_bool_sap=>true ).
+
+* Top of List
+  create object lo_header.
+  lo_h_flow = lo_header->create_flow( row = 1 column = 1 ).
+  lo_h_flow->create_text( text =  'WFL - MAINTENANCE REPAIR AND OPERATING SUPPLY').
+
+  lo_h_flow = lo_header->create_flow( row = 2 column = 1 ).
+  lo_h_flow->create_text( text = 'Total No of records processed : ').
+
+  lo_h_label = lo_header->create_label( row = 2 column = 2 ).
+  lo_h_label->set_text( lv_total_records  ).
+
+  go_salv_table->set_top_of_list( lo_header ).
+
+
+* Application-Specific Functions
+  lo_functions = go_salv_table->get_functions( ).
+  lo_functions->set_all( abap_true ).
+
+  lo_columns = go_salv_table->get_columns( ).
+  lo_columns->set_optimize( gc_x ).
+
+* Set The Layout
+  lo_layout = go_salv_table->get_layout( ).
+  ls_key-report = sy-repid.
+
+  lo_layout->set_key( value = ls_key ).
+
+  lo_layout->set_save_restriction(
+  value  = if_salv_c_layout=>restrict_none ).
+
+  try.
+      lo_columns->set_cell_type_column( 'CELLTYPE' ).
+    catch cx_salv_data_error ##NO_HANDLER.
+  endtry.
+
+* Set the Cell colors
+  try.
+      lo_columns->set_color_column( 'SCOL' ).
+    catch cx_salv_data_error ##NO_HANDLER.
+  endtry.
+
+* Display the OO SALV
+  go_salv_table->display( ).
+
+endform.
+*&---------------------------------------------------------------------*
+*& Form update_opnstatus
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form update_opnstatus.
+  constants : lv_delmi type c value '|' .
+  clear gs_output_file.
+  gs_status_table-request_id    = gs_mdm_data-request_id .
+  gs_status_table-material_type = gs_mdm_data-mat_type.
+  gs_status_table-plant         = gs_mdm_data-plant .
+  gs_status_table-matnr         = g_matnr.
+  gs_status_table-maktx         = gs_mdm_data-mat_desc .
+  gs_status_table-data          = sy-datum .
+  if gs_return-type eq 'S' .
+    gs_status_table-status         = '1' .
+    gs_output_file-sap_create_flag = '1' .
+    gs_output_file-status_flag     = '1' .
+    gs_output_file-remarks         = gs_return-id && '_' && gs_return-number && gs_return-message .
+    gs_status_table-remarks        = gs_return-message .
+  else.
+    gs_status_table-status         = '0' .
+    gs_output_file-sap_create_flag = '0' .
+    gs_output_file-reject_reason   = gs_return-id && '_' && gs_return-number && gs_return-message .
+    gs_output_file-status_flag     = '0' .
+    gs_output_file-remarks         = gs_return-id && '_' && gs_return-number && gs_return-message .
+    gs_status_table-remarks        = gs_return-message .
+  endif.
+
+  modify zmm_mdm_status from gs_status_table .
+  append gs_status_table to gt_status_table.
+  lv_total_records = lines( gt_status_table ).
+  condense lv_total_records.
+  get time stamp field data(timestamp) .
+
+
+  gs_output_file-request_id            = gs_mdm_data-request_id .
+  gs_output_file-mdm_create_flag       = gs_mdm_data-mdm_create_flag .
+  gs_output_file-mdm_update_flag       = gs_mdm_data-mdm_update_flag .
+  gs_output_file-mdm_delete_flag       = gs_mdm_data-mdm_delete_flag .
+  gs_output_file-transaction_date_time = timestamp .
+  gs_output_file-sap_code              = g_matnr . "#EC CI_FLDEXT_OK[2215424]
+  gs_output_file-sap_code_description  = gs_mdm_data-mat_desc.
+  gs_output_file-delim1  =  lv_delmi .
+  gs_output_file-delim2  =  lv_delmi .
+  gs_output_file-delim3  =  lv_delmi .
+  gs_output_file-delim4  =  lv_delmi .
+  gs_output_file-delim5  =  lv_delmi .
+  gs_output_file-delim6  =  lv_delmi .
+  gs_output_file-delim7  =  lv_delmi .
+  gs_output_file-delim8  =  lv_delmi .
+  gs_output_file-delim9  =  lv_delmi .
+  gs_output_file-delim10 =  lv_delmi .
+  gs_output_file-delim11 =  lv_delmi .
+  gs_output_file-delim12 =  lv_delmi .
+  gs_output_file-delim13 =  lv_delmi .
+  append gs_output_file to gt_output_file .
+
+endform.
+*&---------------------------------------------------------------------*
+*& Form uploadfile
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form uploadfile .
+  data  : l_filename type string.
+  clear : l_filename.
+  refresh : gt_mdm_data[], gt_return.
+
+  l_filename  = p_file.
+
+  data: it_type      type truxs_t_text_data.
+
+  call function 'TEXT_CONVERT_XLS_TO_SAP'
+    exporting
+      i_field_seperator    = 'X'
+      i_line_header        = 'X'
+      i_tab_raw_data       = it_type
+      i_filename           = p_file
+    tables
+      i_tab_converted_data = gt_mdm_data
+    exceptions
+      conversion_failed    = 1
+      others               = 2.
+endform.
+*&---------------------------------------------------------------------*
+*& Form processdata
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form processdata .
+  data lv_function type bapifn.
+  loop at gt_mdm_data into gs_mdm_data .
+*    if p_file is initial.
+*      perform create_change_material.
+*    else.
+    if gs_mdm_data-sap_code is initial.
+      lv_function = 'INS'.
+    else.
+      lv_function = 'UPD'.
+    endif.
+    perform create_material_excel using lv_function.
+    clear lv_function.
+*    endif.
+  endloop.
+endform.
+*&---------------------------------------------------------------------*
+*& Form display_data
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form display_data .
+  if gt_return is not initial.
+    try.
+        cl_salv_table=>factory( importing r_salv_table = data(lo_tab)
+                                changing  t_table      = gt_return ).
+        lo_tab->get_functions( )->set_all( ).
+        lo_tab->get_columns( )->set_optimize( ).
+        lo_tab->get_display_settings( )->set_striped_pattern( abap_true ).
+
+        data:
+          ls_key    type salv_s_layout_key,
+          lo_layout type ref to cl_salv_layout.
+        ls_key-report = sy-repid.
+        lo_layout = lo_tab->get_layout( ).
+        lo_layout->set_save_restriction( if_salv_c_layout=>restrict_none ).
+        lo_layout->set_key( ls_key ).
+
+        lo_tab->display( ).
+
+      catch cx_root.
+        message 'Error in ALV creation' type 'E'.
+    endtry.
+  endif.
+endform.
+*&---------------------------------------------------------------------*
+*& Form create_material_excel
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form create_material_excel using p_function type bapifn.
+  data : headdata                type table of bapie1matheader,
+         clientdata              type table of bapie1mara,
+         ls_clientdata           type bapie1mara,
+         clientdatax             type table of bapie1marax,
+         ls_clientdatax          type bapie1marax,
+         plantdata               type table of bapie1marc,
+         ls_plantdata            type bapie1marc,
+         plantdatax              type table of bapie1marcx,
+         ls_plantdatax           type bapie1marcx,
+         storagelocationdata     type table of bapie1mard,
+         ls_storagelocationdata  type bapie1mard,
+         storagelocationdatax    type table of bapie1mardx,
+         ls_storagelocationdatax type  bapie1mardx,
+         valuationdata           type table of bapie1mbew,
+         ls_valuationdata        type bapie1mbew,
+         valuationdatax          type table of bapie1mbewx,
+         ls_valuationdatax       type bapie1mbewx,
+         salesdata               type table of   bapie1mvke,
+         salesdatax              type table of  bapie1mvkex,
+         ls_salesdatax           type bapie1mvkex,
+         materialdescription     type table of bapie1makt,
+         taxclassifications      type table of  bapie1mlan,
+         materiallongtext        type table of  bapie1mltx,
+         unitsofmeasure          type table of  bapie1marm,
+         unitsofmeasurex         type table of bapie1marmx,
+         return                  type bapiret2.
+
+  data : lv_mtart        type bapimatdoa-matl_type,
+         material_number type table of bapimatinr.
+
+  refresh : headdata, clientdata, clientdatax, plantdata, plantdatax,
+            storagelocationdata, storagelocationdatax, materiallongtext, material_number.
+
+  clear : ls_clientdata, ls_clientdatax, ls_plantdata, ls_plantdatax,
+          ls_storagelocationdata, ls_storagelocationdatax, return, gs_return, lv_mtart.
+
+  lv_mtart = gs_mdm_data-mat_type.
+  if p_function = 'INS'.
+    lv_mtart = gs_mdm_data-mat_type.
+    call function 'BAPI_MATERIAL_GETINTNUMBER'  "#EC CI_USAGE_OK[2438131]
+      exporting
+        material_type   = lv_mtart
+        industry_sector = 'M'
+      tables
+        material_number = material_number.
+
+    data(ls_material_number) = material_number[ 1 ].
+  elseif p_function = 'UPD'.
+    ls_material_number-material = |{ gs_mdm_data-sap_code alpha = in }|.
+  endif.
+
+  data(ls_views) = value #( gt_views[ mtart = gs_mdm_data-mat_type ] optional ).
+  headdata = value #( ( function        = p_function
+                        material        = ls_material_number-material
+                        ind_sector      = 'M'
+                        matl_type       = ls_views-mtart
+                        basic_view      = ls_views-v_basic
+                        sales_view      = ls_views-v_sales
+                        purchase_view   = ls_views-v_purch
+                        mrp_view        = ls_views-v_mrp
+                        forecast_view   = ls_views-v_forca
+                        work_sched_view = ls_views-v_worksc
+                        prt_view        = ls_views-v_prt
+                        storage_view    = ls_views-v_storag
+                        warehouse_view  = ls_views-v_ware
+                        quality_view    = ls_views-v_qual
+                        account_view    = ls_views-v_acnt
+                        cost_view       = ls_views-v_cost    ) ).
+
+  " Plant Master Data
+  data(ls_mdm_plant) = value #( gt_mdm_plant[ plant = gs_mdm_data-plant
+                                              matl_type = gs_mdm_data-mat_type ] optional ).
+  " Client Data
+  clientdata = value #( ( function = p_function
+                          material = ls_material_number-material
+                          old_mat_no = gs_mdm_data-old_mat_code
+                          matl_group = gs_mdm_data-mat_group
+                          base_uom   = gs_mdm_data-base_unit
+                          batch_mgmt = cond #( when gs_mdm_data-batch_manage <> 'NA' then abap_true else abap_false )
+                          manu_mat   = gs_mdm_data-manf_part_no
+                          extmatlgrp = gs_mdm_data-ext_mat_group
+                          trans_grp  = ls_mdm_plant-trans_grp
+                          pur_valkey = ls_mdm_plant-pur_valkey
+                          qm_procmnt = cond #( when gs_mdm_data-qa_insp_setup = 'Y' then abap_true else abap_false )
+                          dsn_office = ' '
+                          division   = ls_mdm_plant-division
+                          mat_grp_sm = ls_mdm_plant-mat_grp_sm
+                          minremlife = ls_mdm_plant-minremlife
+                          unit_of_wt = ls_mdm_plant-unit_of_wt
+                          item_cat   = ls_mdm_plant-item_cat_g
+                          sh_mat_typ = ls_mdm_plant-sh_mat_typ ) ).
+
+  clientdatax = value #( for client in clientdata ( function = p_function
+                          material = ls_material_number-material
+*                          material_long = abap_true
+                          old_mat_no = cond #( when client-old_mat_no  is not initial then abap_true else abap_false )
+                          matl_group = cond #( when client-matl_group  is not initial then abap_true else abap_false )
+                          base_uom   = cond #( when client-base_uom    is not initial then abap_true else abap_false )
+                          batch_mgmt = cond #( when client-batch_mgmt  is not initial then abap_true else abap_false )
+                          manu_mat   = cond #( when client-manu_mat    is not initial then abap_true else abap_false )
+                          extmatlgrp = cond #( when client-extmatlgrp  is not initial then abap_true else abap_false )
+                          trans_grp  = cond #( when client-trans_grp   is not initial then abap_true else abap_false )
+                          pur_valkey = cond #( when client-pur_valkey  is not initial then abap_true else abap_false )
+                          qm_procmnt = cond #( when client-qm_procmnt  is not initial then abap_true else abap_false )
+                          dsn_office = cond #( when client-dsn_office  is not initial then abap_true else abap_false )
+                          division   = cond #( when client-division    is not initial then abap_true else abap_false )
+                          mat_grp_sm = cond #( when client-mat_grp_sm  is not initial then abap_true else abap_false )
+                          minremlife = cond #( when client-minremlife  is not initial then abap_true else abap_false )
+                          unit_of_wt = cond #( when client-unit_of_wt  is not initial then abap_true else abap_false )
+                          item_cat   = cond #( when client-item_cat    is not initial then abap_true else abap_false )
+                          sh_mat_typ = cond #( when client-sh_mat_typ  is not initial then abap_true else abap_false ) ) ).
+
+*--------------------------------------------------------------------*
+  " Plant Data
+  plantdata = value #( ( function               = p_function
+                         material               = ls_material_number-material
+*                         material_long          = ls_material_number-material
+                         plant                  = gs_mdm_data-plant
+                         abc_id                 = cond #( when gs_mdm_data-abc_indicator <> 'NA' then gs_mdm_data-abc_indicator else '' )
+                         pur_group              = ls_mdm_plant-pur_group
+                         mrp_type               = ls_mdm_plant-mrp_type
+                         lotsizekey             = ls_mdm_plant-lotsizekey
+                         mrp_ctrler             = ls_mdm_plant-mrp_ctrler
+                         profit_ctr             = ls_mdm_plant-profit_ctr
+                         availcheck             = ls_mdm_plant-availcheck
+                         loadinggrp             = ls_mdm_plant-loadinggrp
+                         ctrl_code              = gs_mdm_data-hsn_code
+                         ctrl_key               = cond #( when gs_mdm_data-qa_insp_setup = 'Y' then ls_mdm_plant-ctrl_key )
+                         ind_post_to_insp_stock = ls_mdm_plant-ind_post_to_insp_stock
+                         lot_size               = '1'
+                         variance_key           = '000001'
+                         no_costing             = ls_mdm_plant-no_costing
+                         period_ind             = ls_mdm_plant-period_ind
+                         mrp_group              = ls_mdm_plant-mrp_group
+                         plan_strgp             = ls_mdm_plant-plan_strgp
+                         proc_type              = ls_mdm_plant-proc_type
+                         sm_key                 = ls_mdm_plant-sm_key
+                         backflush              = ls_mdm_plant-backflush
+                         plnd_delry             = ls_mdm_plant-plnd_delry
+                         gr_pr_time             = ls_mdm_plant-gr_pr_time
+                         dep_req_id             = ls_mdm_plant-dep_req_id
+                         cert_type              = ls_mdm_plant-cert_type
+                         consummode             = ls_mdm_plant-consummode
+                         bwd_cons               = ls_mdm_plant-bwd_cons
+                         fwd_cons               = ls_mdm_plant-fwd_cons
+                         serno_prof             = ls_mdm_plant-serno_prof
+                         sales_view             = ls_mdm_plant-sales_view
+                         purch_view             = ls_views-v_purch
+                         mrp_view               = ls_views-v_mrp
+                         forecast_view          = ls_views-v_forca
+                         work_sched_view        = ls_views-v_worksc
+                         prt_view               = ls_views-v_prt
+                         storage_view           = ls_views-v_storag
+                         warehouse_view         = ls_views-v_ware
+                         quality_view           = ls_views-v_qual
+                         account_view           = ls_views-v_acnt
+                         cost_view              = ls_views-v_cost ) ).
+
+  plantdatax = value #( for plant in plantdata ( function               = p_function
+                                                 material               = ls_material_number-material
+*                                                 material_long          = abap_true
+                                                 plant                  = gs_mdm_data-plant
+                                                 abc_id     = cond #( when plant-abc_id     is not initial then abap_true else abap_false )
+                                                 pur_group  = cond #( when plant-pur_group  is not initial then abap_true else abap_false )
+                                                 mrp_type   = cond #( when plant-mrp_type   is not initial then abap_true else abap_false )
+                                                 lotsizekey = cond #( when plant-lotsizekey is not initial then abap_true else abap_false )
+                                                 mrp_ctrler = cond #( when plant-mrp_ctrler is not initial then abap_true else abap_false )
+                                                 profit_ctr = cond #( when plant-profit_ctr is not initial then abap_true else abap_false )
+                                                 availcheck = cond #( when plant-availcheck is not initial then abap_true else abap_false )
+                                                 loadinggrp = cond #( when plant-loadinggrp is not initial then abap_true else abap_false )
+                                                 ctrl_code  = cond #( when plant-ctrl_code  is not initial then abap_true else abap_false )
+                                                 ctrl_key   = cond #( when plant-ctrl_key   is not initial then abap_true else abap_false )
+                                                 ind_post_to_insp_stock = cond #( when plant-ind_post_to_insp_stock is not initial then abap_true else abap_false )
+                                                 lot_size     = cond #( when plant-lot_size     is not initial then abap_true else abap_false )
+                                                 variance_key = cond #( when plant-variance_key is not initial then abap_true else abap_false )
+                                                 no_costing   = cond #( when plant-no_costing   is not initial then abap_true else abap_false )
+                                                 period_ind   = cond #( when plant-period_ind   is not initial then abap_true else abap_false )
+                                                 mrp_group    = cond #( when plant-mrp_group    is not initial then abap_true else abap_false )
+                                                 plan_strgp   = cond #( when plant-plan_strgp   is not initial then abap_true else abap_false )
+                                                 proc_type    = cond #( when plant-proc_type    is not initial then abap_true else abap_false )
+                                                 sm_key       = cond #( when plant-sm_key       is not initial then abap_true else abap_false )
+                                                 backflush    = cond #( when plant-backflush    is not initial then abap_true else abap_false )
+                                                 plnd_delry   = cond #( when plant-plnd_delry   is not initial then abap_true else abap_false )
+                                                 gr_pr_time   = cond #( when plant-gr_pr_time   is not initial then abap_true else abap_false )
+                                                 dep_req_id   = cond #( when plant-dep_req_id   is not initial then abap_true else abap_false )
+                                                 cert_type    = cond #( when plant-cert_type    is not initial then abap_true else abap_false )
+                                                 consummode   = cond #( when plant-consummode   is not initial then abap_true else abap_false )
+                                                 bwd_cons     = cond #( when plant-bwd_cons     is not initial then abap_true else abap_false )
+                                                 fwd_cons     = cond #( when plant-fwd_cons     is not initial then abap_true else abap_false )
+                                                 serno_prof   = cond #( when plant-serno_prof   is not initial then abap_true else abap_false )
+                                                 ) ).
+
+*--------------------------------------------------------------------*
+  " Storage Location
+  select werks, lgort from t001l into table @data(lt_t001l) where werks = @gs_mdm_data-plant.
+
+  storagelocationdata = value #( for ls_t001l in lt_t001l ( function = p_function
+                                                            material = ls_material_number-material
+                                                            plant = ls_t001l-werks
+                                                           stge_loc = ls_t001l-lgort ) ).
+  storagelocationdatax = value #( for ls_t001l in lt_t001l ( function = p_function
+                                                            material = ls_material_number-material
+                                                            plant = ls_t001l-werks
+                                                            stge_loc = ls_t001l-lgort ) ).
+
+*--------------------------------------------------------------------*
+  " Valuation Data
+  ls_valuationdata-function = p_function.
+  ls_valuationdatax-function = p_function.
+
+  ls_valuationdata-material = ls_material_number-material.
+  ls_valuationdatax-material = ls_material_number-material.
+
+  ls_valuationdata-val_area = gs_mdm_data-plant.
+  ls_valuationdatax-val_area = gs_mdm_data-plant.
+
+*  ls_valuationdata-val_type = gs_mdm_data-val_type.
+*  ls_valuationdatax-val_type = gs_mdm_data-val_type.
+
+  ls_valuationdata-val_class = gs_mdm_data-val_class.
+  if ls_valuationdata-val_class is not initial.
+    ls_valuationdatax-val_class = abap_true.
+  endif.
+
+  ls_valuationdata-moving_pr = gs_mdm_data-moving_price.
+  if ls_valuationdata-moving_pr is not initial.
+    ls_valuationdatax-moving_pr = abap_true.
+  endif.
+
+  if gs_mdm_data-mat_type = 'ZFRT' and ( gs_mdm_data-plant = '7002' or gs_mdm_data-plant = '7003' ).
+    ls_valuationdata-ml_settle = '3'.
+    ls_valuationdatax-ml_settle = abap_true.
+  else.
+    ls_valuationdata-ml_settle = '2'.
+    ls_valuationdatax-ml_settle = abap_true.
+  endif.
+  ls_valuationdata-orig_mat = ls_mdm_plant-orig_mat. " abap_true.
+  if ls_valuationdata-orig_mat is not initial.
+    ls_valuationdatax-orig_mat = abap_true.
+  endif.
+
+  ls_valuationdata-qty_struct = ''.
+  ls_valuationdatax-qty_struct = abap_true.
+
+  ls_valuationdata-val_cat = ls_mdm_plant-val_cat.
+  if ls_valuationdata-val_cat is not initial.
+    ls_valuationdatax-val_cat = abap_true.
+  endif.
+
+  ls_valuationdata-price_ctrl = ls_mdm_plant-price_ctrl.
+  if ls_valuationdata-price_ctrl is not initial.
+    ls_valuationdatax-price_ctrl = abap_true.
+  endif.
+
+  ls_valuationdata-account_view = ls_views-v_acnt.
+  ls_valuationdata-cost_view = ls_views-v_cost.
+
+
+  append ls_valuationdata to valuationdata.
+  append ls_valuationdatax to valuationdatax.
+*--------------------------------------------------------------------*
+  " Sales Data
+  salesdata = value #( for ls_vkorg in gt_sales_area where ( werks = gs_mdm_data-plant )
+                       ( function   = p_function
+                         material   = ls_material_number-material
+                         sales_org  = ls_vkorg-vkorg
+                         distr_chan = ls_vkorg-vtweg
+                         item_cat   = ls_mdm_plant-item_cat " 'NORM'
+                         acct_assgt = ls_mdm_plant-acct_assgt
+                         matl_stats = ls_mdm_plant-matl_stats
+                         delyg_plnt = ls_mdm_plant-delyg_plnt
+                         mat_pr_grp = ls_mdm_plant-mat_pr_grp
+                         pr_ref_mat = ls_mdm_plant-pr_ref_mat
+                         matl_grp_1 = ls_mdm_plant-matl_grp_1 ) ).
+
+  salesdatax = value #( for ls_salesdata in salesdata ( function = p_function
+                                                        material = ls_material_number-material
+                                                        sales_org = ls_salesdata-sales_org
+                                                        distr_chan = ls_salesdata-distr_chan
+                                                        item_cat   = cond #( when ls_salesdata-item_cat   is not initial then abap_true else abap_false )
+                                                        acct_assgt = cond #( when ls_salesdata-acct_assgt is not initial then abap_true else abap_false )
+                                                        matl_stats = cond #( when ls_salesdata-matl_stats is not initial then abap_true else abap_false )
+                                                        delyg_plnt = cond #( when ls_salesdata-delyg_plnt is not initial then abap_true else abap_false )
+                                                        mat_pr_grp = cond #( when ls_salesdata-mat_pr_grp is not initial then abap_true else abap_false )
+                                                        pr_ref_mat = cond #( when ls_salesdata-pr_ref_mat is not initial then abap_true else abap_false )
+                                                        matl_grp_1 = cond #( when ls_salesdata-matl_grp_1 is not initial then abap_true else abap_false )
+                                                        ) ).
+*--------------------------------------------------------------------*
+  " Material Description
+  materialdescription = value #( ( function = p_function
+                                   material = ls_material_number-material
+                                   langu    = sy-langu
+                                   matl_desc = gs_mdm_data-mat_desc ) ).
+*--------------------------------------------------------------------*
+  " Tax Classification
+*  select land1, taxim from tmkm1 into table @data(lt_tmkm1) where land1 = 'IN' and taxim = '1'.
+*  taxclassifications = value #( for ls_tmkm1 in lt_tmkm1 ( function = 'INS'
+  taxclassifications = value #( ( function = p_function
+                                  material = ls_material_number-material
+                                  depcountry = ls_mdm_plant-depcountry    " ls_tmkm1-land1
+                                  tax_type_1 = ls_mdm_plant-tax_type_1    " 'JOCG'
+                                  taxclass_1 = ls_mdm_plant-taxclass_1    " '1'
+                                  tax_type_2 = ls_mdm_plant-tax_type_2    " 'JOSG'
+                                  taxclass_2 = ls_mdm_plant-taxclass_2    " '1'
+                                  tax_type_3 = ls_mdm_plant-tax_type_3    " 'JOIG'
+                                  taxclass_3 = ls_mdm_plant-taxclass_3    " '1'
+                                  tax_type_4 = ls_mdm_plant-tax_type_4    " 'JTC1'
+                                  taxclass_4 = ls_mdm_plant-taxclass_4    " '1'
+                                  tax_type_5 = ls_mdm_plant-tax_type_5
+                                  taxclass_5 = ls_mdm_plant-taxclass_5
+                                  tax_type_6 = ls_mdm_plant-tax_type_6
+                                  taxclass_6 = ls_mdm_plant-taxclass_6
+                                  tax_type_7 = ls_mdm_plant-tax_type_7
+                                  taxclass_7 = ls_mdm_plant-taxclass_7
+                                  tax_type_8 = ls_mdm_plant-tax_type_8
+                                  taxclass_8 = ls_mdm_plant-taxclass_8
+                                  tax_type_9 = ls_mdm_plant-tax_type_9
+                                  taxclass_9 = ls_mdm_plant-taxclass_9
+                                  tax_ind    = ls_mdm_plant-tax_ind  ) ).      " ls_tmkm1-taxim
+
+  " Purchase Long Text
+  materiallongtext = value #( ( function = p_function
+                                material = ls_material_number-material
+                                applobject = ls_mdm_plant-applobject " 'MATERIAL'
+                                text_name  = ls_material_number-material
+                                text_id    = ls_mdm_plant-text_id    " 'BEST'
+                                langu      = ls_mdm_plant-langu      " sy-langu
+                                text_line  = gs_mdm_data-po_text ) ).
+
+  " Unit Of Measures
+  unitsofmeasure = value #( ( function = p_function
+                              material = ls_material_number-material
+                              alt_unit = gs_mdm_data-base_unit
+                              numerator = ls_mdm_plant-numerator
+                              denominatr = ls_mdm_plant-denominatr ) ).
+
+  unitsofmeasurex = value #( for ls_unit in unitsofmeasure ( function = p_function
+                                                             material = ls_material_number-material
+                                                             alt_unit = gs_mdm_data-base_unit
+                                                             numerator = cond #( when ls_unit-numerator is not initial
+                                                                                 then abap_true
+                                                                                 else abap_false )
+                                                             denominatr = cond #( when ls_unit-denominatr is not initial
+                                                                                 then abap_true
+                                                                                 else abap_false ) ) ).
+  call function 'BAPI_MATERIAL_SAVEREPLICA'    "#EC CI_USAGE_OK[2438131]
+    exporting
+      noappllog            = abap_true
+      nochangedoc          = abap_true
+      testrun              = abap_false
+      inpfldcheck          = 'W'
+*     FLAG_CAD_CALL        = ' '
+*     NO_ROLLBACK_WORK     = ' '
+*     FLAG_ONLINE          = ' '
+    importing
+      return               = gs_return
+    tables
+      headdata             = headdata
+      clientdata           = clientdata
+      clientdatax          = clientdatax
+      plantdata            = plantdata
+      plantdatax           = plantdatax
+      storagelocationdata  = storagelocationdata
+      storagelocationdatax = storagelocationdatax
+      valuationdata        = valuationdata
+      valuationdatax       = valuationdatax
+      salesdata            = salesdata
+      salesdatax           = salesdatax
+      materialdescription  = materialdescription
+      taxclassifications   = taxclassifications
+      materiallongtext     = materiallongtext
+      unitsofmeasure       = unitsofmeasure
+      unitsofmeasurex      = unitsofmeasurex.
+
+  if gs_return-type = 'E'.
+    call function 'BAPI_TRANSACTION_ROLLBACK'.
+    append gs_return to gt_return.
+    perform update_opnstatus.
+  else.
+    data: lt_inspection type standard table of bapi1001004_qmat,
+          ls_inspection type bapi1001004_qmat,
+          lt_return     type standard table of bapiret2.
+    refresh : lt_inspection, lt_return.
+    clear: ls_inspection.
+    call function 'BAPI_TRANSACTION_COMMIT'
+      exporting
+        wait = 'X'.
+    wait up to 2 seconds .
+    clear g_matnr.
+*    move gs_return-message_v1 to g_matnr.
+    move ls_material_number-material to g_matnr.
+    if gs_return-number = '810'.
+      gs_return-number = '800'.
+      gs_return-message = |Material| && | { g_matnr } | && |created|.
+      gs_return-message_v1 = |{ g_matnr alpha = out }|.
+    endif.
+    append gs_return to gt_return.
+    if gs_mdm_data-qa_insp_setup = 'Y'.
+*      split ls_mdm_plant-insptype at ',' into data(lv_01) data(lv_89) data(lv_09).
+      lt_inspection = value #( ( function                  = '009'
+                                 material                  = ls_material_number-material            plant = gs_mdm_data-plant
+                                 insptype                  = ls_mdm_plant-insptype                  ind_post_to_insp_stock = ls_mdm_plant-ind_post_to_insp_stock  ind_insptype_mat_active = ls_mdm_plant-ind_insptype_mat_active
+                                 preferred_insptype        = 'X'                                    ind_insp_with_tsk_list = ls_mdm_plant-ind_insp_with_tsk_list  ind_auto_assign         = ls_mdm_plant-ind_auto_assign
+                                 ind_insp_by_charac        = ls_mdm_plant-ind_insp_by_charac        ind_automatic_ud       = ls_mdm_plant-ind_automatic_ud        ind_skips_allowed         = ls_mdm_plant-ind_skips_allowed
+                                 ind_single_units_possible = ls_mdm_plant-ind_single_units_possible qual_score_procedure   = ls_mdm_plant-qual_score_procedure  )
+
+*                               ( function                  = '009'
+*                                 material                  = ls_material_number-material            plant = gs_mdm_data-plant
+*                                 insptype                  = lv_89                                  ind_post_to_insp_stock = ls_mdm_plant-ind_post_to_insp_stock  ind_insptype_mat_active = ls_mdm_plant-ind_insptype_mat_active
+*                                 preferred_insptype        = 'X'                                    ind_insp_with_tsk_list = ls_mdm_plant-ind_insp_with_tsk_list  ind_auto_assign         = ls_mdm_plant-ind_auto_assign
+*                                 ind_insp_by_charac        = ls_mdm_plant-ind_insp_by_charac        ind_automatic_ud       = ls_mdm_plant-ind_automatic_ud        ind_skips_allowed         = ls_mdm_plant-ind_skips_allowed
+*                                 ind_single_units_possible = ls_mdm_plant-ind_single_units_possible qual_score_procedure   = ls_mdm_plant-qual_score_procedure  )
+*
+*                               ( function                  = '009'
+*                                 material                  = ls_material_number-material            plant = gs_mdm_data-plant
+*                                 insptype                  = lv_09                                  ind_post_to_insp_stock = ls_mdm_plant-ind_post_to_insp_stock  ind_insptype_mat_active = ls_mdm_plant-ind_insptype_mat_active
+*                                 preferred_insptype        = 'X'                                    ind_insp_with_tsk_list = ls_mdm_plant-ind_insp_with_tsk_list  ind_auto_assign         = ls_mdm_plant-ind_auto_assign
+*                                 ind_insp_by_charac        = ls_mdm_plant-ind_insp_by_charac        ind_automatic_ud       = ls_mdm_plant-ind_automatic_ud        ind_skips_allowed         = ls_mdm_plant-ind_skips_allowed
+*                                 ind_single_units_possible = ls_mdm_plant-ind_single_units_possible qual_score_procedure   = ls_mdm_plant-qual_score_procedure   )
+                                 ).
+      delete lt_inspection where insptype is initial.
+
+      call function 'BAPI_MATINSPCTRL_SAVEREPLICA'  "#EC CI_USAGE_OK[2438131]
+        tables
+          return         = lt_return
+          inspectionctrl = lt_inspection.
+      if line_exists( lt_return[ type = 'E' ] ).
+      else.
+        call function 'BAPI_TRANSACTION_COMMIT'
+          exporting
+            wait = 'X'.
+        wait up to 2 seconds .
+        append lines of lt_return to gt_return.
+      endif.
+    endif.
+    perform update_opnstatus.
+  endif.
+endform.
+*&---------------------------------------------------------------------*
+*& Form op_file_header
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form op_file_header .
+  constants:
+    lc_delim type c value '|'.
+
+  gs_output_file-request_id = 'REQUEST_ID' .
+  gs_output_file-mdm_create_flag = 'MDM_CREATE_FLAG' .
+  gs_output_file-mdm_update_flag = 'MDM_UPDATE_FLAG' .
+  gs_output_file-mdm_delete_flag = 'MDM_DELETE_FLAG' .
+  gs_output_file-sap_create_flag = 'SAP_CREATE_FLAG' .
+  gs_output_file-sap_update_flag = 'SAP_UPDATE_FLAG' .
+  gs_output_file-sap_delete_flag = 'SAP_DELETE_FLAG' .
+  gs_output_file-transaction_date_time = 'TRANSACTION_DATE_TIME'.
+  gs_output_file-sap_code        = 'SAP_CODE'.
+  gs_output_file-sap_code_description = 'SAP_CODE_DESCRIPTION' .
+  gs_output_file-reject_reason   = 'REJECT_REASON' .
+  gs_output_file-status_flag     = 'STATUS_FLAG'.
+  gs_output_file-remarks         = 'REMARKS'.
+  gs_output_file-delim1          =  lc_delim .
+  gs_output_file-delim2          =  lc_delim .
+  gs_output_file-delim3          =  lc_delim .
+  gs_output_file-delim4          =  lc_delim .
+  gs_output_file-delim5          =  lc_delim .
+  gs_output_file-delim6          =  lc_delim .
+  gs_output_file-delim7          =  lc_delim .
+  gs_output_file-delim8          =  lc_delim .
+  gs_output_file-delim9          =  lc_delim .
+  gs_output_file-delim10         =  lc_delim .
+  gs_output_file-delim11         =  lc_delim .
+  gs_output_file-delim12         =  lc_delim .
+  gs_output_file-delim13         =  lc_delim .
+  append gs_output_file to gt_output_file .
+endform.
+*&---------------------------------------------------------------------*
+*& Form change_material
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      --> LV_FUNCTION
+*&---------------------------------------------------------------------*
+form change_material using p_function type bapifn.
+  data : headdata                type table of bapie1matheader,
+         clientdata              type table of bapie1mara,
+         ls_clientdata           type bapie1mara,
+         clientdatax             type table of bapie1marax,
+         ls_clientdatax          type bapie1marax,
+         plantdata               type table of bapie1marc,
+         ls_plantdata            type bapie1marc,
+         plantdatax              type table of bapie1marcx,
+         ls_plantdatax           type bapie1marcx,
+         storagelocationdata     type table of bapie1mard,
+         ls_storagelocationdata  type bapie1mard,
+         storagelocationdatax    type table of bapie1mardx,
+         ls_storagelocationdatax type  bapie1mardx,
+         valuationdata           type table of bapie1mbew,
+         ls_valuationdata        type bapie1mbew,
+         valuationdatax          type table of bapie1mbewx,
+         ls_valuationdatax       type bapie1mbewx,
+         salesdata               type table of   bapie1mvke,
+         salesdatax              type table of  bapie1mvkex,
+         ls_salesdatax           type bapie1mvkex,
+         materialdescription     type table of bapie1makt,
+         taxclassifications      type table of  bapie1mlan,
+         materiallongtext        type table of  bapie1mltx,
+         unitsofmeasure          type table of  bapie1marm,
+         unitsofmeasurex         type table of bapie1marmx,
+         return                  type bapiret2.
+
+  data : lv_mtart        type bapimatdoa-matl_type,
+         ls_material_number type bapimatinr.
+
+  refresh : headdata, clientdata, clientdatax, plantdata, plantdatax,
+            storagelocationdata, storagelocationdatax, materiallongtext.
+
+  clear : ls_clientdata, ls_clientdatax, ls_plantdata, ls_plantdatax, ls_material_number,
+          ls_storagelocationdata, ls_storagelocationdatax, return, gs_return, lv_mtart.
+
+  perform op_file_header.
+
+  if p_function = 'UPD'.
+    ls_material_number-material = |{ gs_mdm_data-sap_code alpha = in }|.
+    data(gs_mara) = value #( gt_mara[ matnr = gs_mdm_data-sap_code ] optional ).
+    ls_material_number-material = |{ gs_mdm_data-sap_code alpha = in }|.
+    gs_mdm_data-mat_type = gs_mara-mtart.   " Material Type
+    if gs_mdm_data-base_unit is initial.
+      gs_mdm_data-base_unit = gs_mara-meins.  " Unit of Measure
+    endif.
+  endif.
+  data(ls_views) = value #( gt_views[ mtart = gs_mdm_data-mat_type ] optional ).
+  headdata = value #( ( function        = p_function " 'INS'
+                        material        = ls_material_number-material
+                        ind_sector      = 'M'
+                        matl_type       = ls_views-mtart
+                        basic_view      = ls_views-v_basic
+                        sales_view      = ls_views-v_sales
+                        purchase_view   = ls_views-v_purch
+                        mrp_view        = ls_views-v_mrp
+                        forecast_view   = ls_views-v_forca
+                        work_sched_view = ls_views-v_worksc
+                        prt_view        = ls_views-v_prt
+                        storage_view    = ls_views-v_storag
+                        warehouse_view  = ls_views-v_ware
+                        quality_view    = ls_views-v_qual
+                        account_view    = ls_views-v_acnt
+                        cost_view       = ls_views-v_cost    ) ).
+
+  " Client Data
+  clientdata = value #( ( function = p_function
+                          material = ls_material_number-material
+                          old_mat_no = cond #( when gs_mdm_data-old_mat_code is not initial then gs_mdm_data-old_mat_code )
+                          matl_group = cond #( when gs_mdm_data-mat_group is not initial then gs_mdm_data-mat_group )
+                          base_uom   = cond #( when gs_mdm_data-base_unit is not initial then gs_mdm_data-base_unit )
+                          batch_mgmt = cond #( when gs_mdm_data-batch_manage <> 'NA' and
+                                                    gs_mdm_data-batch_manage is not initial
+                                                    then abap_true else abap_false )
+                          manu_mat   = cond #( when gs_mdm_data-manf_part_no  is not initial then gs_mdm_data-manf_part_no )
+                          extmatlgrp = cond #( when gs_mdm_data-ext_mat_group is not initial then gs_mdm_data-ext_mat_group )
+                          qm_procmnt = cond #( when gs_mdm_data-qa_insp_setup = 'Y' and
+                                                    gs_mdm_data-qa_insp_setup is not initial
+                                               then abap_true else abap_false ) ) ).
+
+  clientdatax = value #( for client in clientdata ( function = p_function
+                          material = ls_material_number-material
+                          old_mat_no = cond #( when client-old_mat_no  is not initial then abap_true else abap_false )
+                          matl_group = cond #( when client-matl_group  is not initial then abap_true else abap_false )
+                          base_uom   = cond #( when client-base_uom    is not initial then abap_true else abap_false )
+                          batch_mgmt = cond #( when client-batch_mgmt  is not initial then abap_true else abap_false )
+                          manu_mat   = cond #( when client-manu_mat    is not initial then abap_true else abap_false )
+                          extmatlgrp = cond #( when client-extmatlgrp  is not initial then abap_true else abap_false )
+                          qm_procmnt = cond #( when client-qm_procmnt  is not initial then abap_true else abap_false ) ) ).
+
+*--------------------------------------------------------------------*
+  loop at gt_marc into data(gs_marc) where matnr = ls_material_number-material.
+    " Plant Master Data
+    data(ls_mdm_plant) = value #( gt_mdm_plant[ plant = gs_marc-werks
+                                                matl_type = gs_mara-matkl ] optional ).
+    " Plant Data
+    plantdata = value #( base plantdata
+                         ( function               = p_function
+                           material               = ls_material_number-material
+                           plant                  = gs_marc-werks
+                           abc_id                 = cond #( when gs_mdm_data-abc_indicator <> 'NA' then gs_mdm_data-abc_indicator else '' )
+                           ctrl_code              = cond #( when gs_mdm_data-hsn_code is not initial then gs_mdm_data-hsn_code else '' )
+                           ctrl_key               = cond #( when gs_mdm_data-qa_insp_setup = 'Y' then ls_mdm_plant-ctrl_key )
+                           purch_view             = ls_views-v_purch
+                           mrp_view               = ls_views-v_mrp
+                           forecast_view          = ls_views-v_forca
+                           work_sched_view        = ls_views-v_worksc
+                           prt_view               = ls_views-v_prt
+                           storage_view           = ls_views-v_storag
+                           warehouse_view         = ls_views-v_ware
+                           quality_view           = ls_views-v_qual
+                           account_view           = ls_views-v_acnt
+                           cost_view              = ls_views-v_cost ) ).
+
+    plantdatax = value #( base  plantdatax
+                          for plant in plantdata ( function               = p_function
+                                                   material               = ls_material_number-material
+                                                   plant                  = gs_marc-werks
+                                                   abc_id     = cond #( when plant-abc_id     is not initial then abap_true else abap_false )
+                                                   ctrl_code  = cond #( when plant-ctrl_code  is not initial then abap_true else abap_false )
+                                                   ctrl_key   = cond #( when plant-ctrl_key   is not initial then abap_true else abap_false ) ) ).
+
+    " Valuation Data
+    ls_valuationdata-function = p_function.
+    ls_valuationdatax-function = p_function.
+
+    ls_valuationdata-material = ls_material_number-material.
+    ls_valuationdatax-material = ls_material_number-material.
+
+    ls_valuationdata-val_area = gs_marc-werks.
+    ls_valuationdatax-val_area = gs_marc-werks.
+
+    if gs_mdm_data-moving_price is not initial.
+      ls_valuationdata-moving_pr = gs_mdm_data-moving_price.
+      if ls_valuationdata-moving_pr is not initial.
+        ls_valuationdatax-moving_pr = abap_true.
+      endif.
+    endif.
+
+    ls_valuationdata-account_view = ls_views-v_acnt.
+    ls_valuationdata-cost_view = ls_views-v_cost.
+
+
+    append ls_valuationdata  to valuationdata.
+    append ls_valuationdatax to valuationdatax.
+
+    " Material Description
+    if gs_mdm_data-mat_desc is not initial.
+      materialdescription = value #( ( function = p_function
+                                       material = ls_material_number-material
+                                       langu    = sy-langu
+                                       matl_desc = gs_mdm_data-mat_desc ) ).
+    endif.
+
+    " Unit Of Measures
+    if gs_mdm_data-base_unit is not initial.
+      unitsofmeasure = value #( ( function = p_function
+                                  material = ls_material_number-material
+                                  alt_unit = gs_mdm_data-base_unit
+                                   ) ).
+
+      unitsofmeasurex = value #( for ls_unit in unitsofmeasure ( function = p_function
+                                                                 material = ls_material_number-material
+                                                                 alt_unit = gs_mdm_data-base_unit
+                                                                  ) ).
+    endif.
+    clear : gs_marc, ls_mdm_plant, ls_valuationdata, ls_valuationdatax.
+  endloop.
+  call function 'BAPI_MATERIAL_SAVEREPLICA'    "#EC CI_USAGE_OK[2438131]
+    exporting
+      noappllog           = abap_true
+      nochangedoc         = abap_true
+      testrun             = abap_false
+      inpfldcheck         = 'W'
+*     FLAG_CAD_CALL       = ' '
+*     NO_ROLLBACK_WORK    = ' '
+*     FLAG_ONLINE         = ' '
+    importing
+      return              = gs_return
+    tables
+      headdata            = headdata
+      clientdata          = clientdata
+      clientdatax         = clientdatax
+      plantdata           = plantdata
+      plantdatax          = plantdatax
+*     storagelocationdata = storagelocationdata
+*     storagelocationdatax = storagelocationdatax
+      valuationdata       = valuationdata
+      valuationdatax      = valuationdatax
+*     salesdata           = salesdata
+*     salesdatax          = salesdatax
+      materialdescription = materialdescription
+*     taxclassifications  = taxclassifications
+*     materiallongtext    = materiallongtext
+      unitsofmeasure      = unitsofmeasure
+      unitsofmeasurex     = unitsofmeasurex.
+
+  if gs_return-type = 'E'.
+    call function 'BAPI_TRANSACTION_ROLLBACK'.
+    append gs_return to gt_return.
+    perform update_opnstatus.
+  else.
+    data: lt_inspection type standard table of bapi1001004_qmat,
+          ls_inspection type bapi1001004_qmat,
+          lt_return     type standard table of bapiret2.
+    refresh : lt_inspection, lt_return.
+    clear: ls_inspection.
+    call function 'BAPI_TRANSACTION_COMMIT'
+      exporting
+        wait = 'X'.
+    wait up to 2 seconds .
+    clear g_matnr.
+*    move gs_return-message_v1 to g_matnr.
+    move ls_material_number-material to g_matnr.
+    if gs_return-number = '810'.
+      if p_function = 'INS'.
+        if gs_mdm_data-mdm_create_flag = '1'.
+          gs_return-number = '800'.
+          gs_return-message = |Material| && | { g_matnr } | && |created|.
+          gs_return-message_v1 = |{ g_matnr alpha = out }|.
+        elseif gs_mdm_data-mdm_create_flag = '2'.
+          gs_return-number = '800'.
+          gs_return-message = |Material| && | { g_matnr } | && |extended|.
+          gs_return-message_v1 = |{ g_matnr alpha = out }|.
+        endif.
+      elseif p_function = 'UPD'.
+        gs_return-number = '801'.
+        gs_return-message = |Material| && | { g_matnr } | && |changed|.
+        gs_return-message_v1 = |{ g_matnr alpha = out }|.
+      endif.
+    endif.
+    append gs_return to gt_return.
+    if gs_mdm_data-qa_insp_setup = 'Y'.
+      split ls_mdm_plant-insptype at ',' into data(lv_01) data(lv_89) data(lv_09).
+      lt_inspection = value #( ( function                  = '009'
+                                 material                  = ls_material_number-material            plant = gs_mdm_data-plant
+                                 insptype                  = lv_01                                  ind_post_to_insp_stock = ls_mdm_plant-ind_post_to_insp_stock  ind_insptype_mat_active = ls_mdm_plant-ind_insptype_mat_active
+                                 preferred_insptype        = 'X'                                    ind_insp_with_tsk_list = ls_mdm_plant-ind_insp_with_tsk_list  ind_auto_assign         = ls_mdm_plant-ind_auto_assign
+                                 ind_insp_by_charac        = ls_mdm_plant-ind_insp_by_charac        ind_automatic_ud       = ls_mdm_plant-ind_automatic_ud        ind_skips_allowed         = ls_mdm_plant-ind_skips_allowed
+                                 ind_single_units_possible = ls_mdm_plant-ind_single_units_possible qual_score_procedure   = ls_mdm_plant-qual_score_procedure  )
+
+                               ( function                  = '009'
+                                 material                  = ls_material_number-material            plant = gs_mdm_data-plant
+                                 insptype                  = lv_89                                  ind_post_to_insp_stock = ls_mdm_plant-ind_post_to_insp_stock  ind_insptype_mat_active = ls_mdm_plant-ind_insptype_mat_active
+                                 preferred_insptype        = 'X'                                    ind_insp_with_tsk_list = ls_mdm_plant-ind_insp_with_tsk_list  ind_auto_assign         = ls_mdm_plant-ind_auto_assign
+                                 ind_insp_by_charac        = ls_mdm_plant-ind_insp_by_charac        ind_automatic_ud       = ls_mdm_plant-ind_automatic_ud        ind_skips_allowed         = ls_mdm_plant-ind_skips_allowed
+                                 ind_single_units_possible = ls_mdm_plant-ind_single_units_possible qual_score_procedure   = ls_mdm_plant-qual_score_procedure  )
+
+                               ( function                  = '009'
+                                 material                  = ls_material_number-material            plant = gs_mdm_data-plant
+                                 insptype                  = lv_09                                  ind_post_to_insp_stock = ls_mdm_plant-ind_post_to_insp_stock  ind_insptype_mat_active = ls_mdm_plant-ind_insptype_mat_active
+                                 preferred_insptype        = 'X'                                    ind_insp_with_tsk_list = ls_mdm_plant-ind_insp_with_tsk_list  ind_auto_assign         = ls_mdm_plant-ind_auto_assign
+                                 ind_insp_by_charac        = ls_mdm_plant-ind_insp_by_charac        ind_automatic_ud       = ls_mdm_plant-ind_automatic_ud        ind_skips_allowed         = ls_mdm_plant-ind_skips_allowed
+                                 ind_single_units_possible = ls_mdm_plant-ind_single_units_possible qual_score_procedure   = ls_mdm_plant-qual_score_procedure   )
+                                 ).
+      delete lt_inspection where insptype is initial.
+
+      call function 'BAPI_MATINSPCTRL_SAVEREPLICA'  "#EC CI_USAGE_OK[2438131]
+        tables
+          return         = lt_return
+          inspectionctrl = lt_inspection.
+      if line_exists( lt_return[ type = 'E' ] ).
+      else.
+        call function 'BAPI_TRANSACTION_COMMIT'
+          exporting
+            wait = 'X'.
+        wait up to 2 seconds .
+        append lines of lt_return to gt_return.
+      endif.
+    endif.
+    perform update_opnstatus.
+  endif.
+
+  if p_file is initial.
+    perform ftp_connect .
+    perform post_optoftp.
+    perform ftp_disconnect .
+  endif.
+endform.
