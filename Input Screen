@@ -1,0 +1,53 @@
+*&---------------------------------------------------------------------*
+*& Include          ZRE_MM_MATERIAL_FTP_SEL
+*&---------------------------------------------------------------------*
+selection-screen : begin of block b1 with frame.
+  parameters : p_file type rlgrap-filename.
+selection-screen : end of block b1.
+
+selection-screen begin of line.
+  selection-screen position 3.
+  parameters : p_ftp  type c radiobutton group rg1.
+  selection-screen comment 4(10) text-r01 for field p_ftp.
+  selection-screen position 18.
+  parameters :p_ftpa type c radiobutton group rg1 default 'X' .
+  selection-screen comment 20(10) text-r02 for field p_ftpa.
+selection-screen end of line.
+
+
+at selection-screen on value-request for p_file.
+
+  data : lv_rc       type i,
+         lt_file_tab type filetable.
+
+  call method cl_gui_frontend_services=>file_open_dialog
+    exporting
+      window_title = 'Select a file'
+    changing
+      file_table   = lt_file_tab
+      rc           = lv_rc.
+  if sy-subrc is initial.
+    data(ls_file_tab) = value #( lt_file_tab[ 1 ] optional ).
+    if ls_file_tab is not initial.
+      p_file = ls_file_tab-filename.
+    endif.
+  endif.
+
+initialization.
+  select * from zmm_mtart_views into table gt_views. "#EC CI_ALL_FIELDS_NEEDED "#EC CI_NOWHERE
+  if sy-subrc = 0.
+    sort gt_views by mtart.
+  endif.
+*  select * from zmmt_plant_prctr into table gt_prctr.
+*  if sy-subrc = 0.
+*    sort gt_prctr by werks.
+*  endif.
+  select vkorg vtweg werks from tvkwz into table gt_sales_area where vkorg not in ( '0001', '0003' ).
+*                                                         and   vtweg in ( '10' ) .
+  if sy-subrc = 0.
+  endif.
+
+  select * from zmm_mdm_plant into table gt_mdm_plant. "#EC CI_ALL_FIELDS_NEEDED "#EC CI_NOWHERE
+  if sy-subrc = 0.
+    sort gt_mdm_plant by plant.
+  endif.
