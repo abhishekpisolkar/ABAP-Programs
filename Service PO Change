@@ -1,0 +1,1225 @@
+
+*&---------------------------------------------------------------------*
+*& Report ZMM_PO_UPLOAD
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+report zmm_service_po_upload_syn_old.
+
+*include zmm_service_po_uploadtop_syn.
+*&---------------------------------------------------------------------*
+*&  Include           ZMM_PO_UPLOADTOP
+*&---------------------------------------------------------------------*
+
+types : begin of ty_file,
+          ebeln       type ekko-ebeln,  "PO
+          bsart       type ekko-bsart,  "PO type
+          lifnr       type ekko-lifnr,  "Vendor
+          ekorg       type string,      "Purchaisng Org
+          ekgrp       type string,      "Purchase Group
+          bukrs       type string,      "Company code
+          date        type string,      "Date
+          st_date     type string, "datum,       "Start Date
+          en_date     type string, "datum,       "End Date
+          waers       type string,      "Currency key
+          zterm       type string,      "Payment Term
+          inco1       type string,      "Incoterms 1
+          inco2       type string,      "Incoterm 2
+          refer       type string,      "Reference
+          dpind       type string,      "Down payment ind
+          dpayper     type string,      "Down Payment Percentage
+          dpamt       type string,      "Down Payment amt
+          dpdate      type string,      "Due Date for Down Payment
+          svdate      type string,      "Start of Validity Period
+          evdate      type string,      "End of Validity Period
+          ri          type string,      "Retention Indicator
+          rper        type string,      "Retention in Percent
+          ebelp       type ekpo-ebelp,  "string,      "PO line item
+          pstyp       type string,      "Item Cat
+          knttp       type string,      "Acc Assign cat
+          matnr       type string, "matnr,       "Material
+          menge       type string,      "Qty
+          uom         type string,      "UOM
+          deldate     type string,      "Del date
+          werks       type string,      "Plant
+          lgort       type string,      "Storage Loc
+          kschl       type string,      "Condition type
+          netprice    type string,      "Net Price
+          npp         type string,      "Number of principal purchase agreement (Contract)
+          inpp        type string,      "Item number of principal purchase agreement
+          reqname     type string,      "Name of requisitioner/requester
+          conkey      type string,      "Control key
+          kostl       type string,      "Cost center
+          hkont       type string,      "G/L
+          dper        type string,      "Distribution percentage in the case of multiple acct assgt
+          order       type string,      "Order no
+          disub_pspnr type string,      "Work Breakdown Structure Element (WBS Element)
+          maktl       type string,      "Material Group
+          netno       type string,      "Network Number for Account Assignment
+          act         type string,      "Operation/Activity Number for Network
+          olimit      type string,      "Overall Limit
+          olimitval   type string,      "Expected Value of Overall Limit
+          nolimit     type string,      "No Limit
+          delind      type string,      "Delivery Completed Indicator
+          grinvind    type string,      "Indicator: GR-Based Invoice Verification
+          priceunit   type string,      "Price unit
+          opriceunit  type string,      "Order Price Unit (Purchasing)
+          grind       type string,      "GR indicator
+          vbeln       type string,      "SO
+          posnr       type string,      "SO item
+          mwskz       type string,      "Tax code
+          shorttext   type string,      "Short text
+          irind       type string,      "Indicator: Invoice receipt
+          banfn       type string,      "PR
+          bnfpo       type string,      "PR item
+          srvpos      type string,      "Activity Number of service
+          seritem     type string,      "Service line item
+          smenge      type string,      "service Qty
+          suom        type string,      "Service UOM
+          spriceunit  type string,      "Service Price unit
+          gpriceunit  type string,      "Gross Service unit
+          snetvalue   type string,      "Service net value
+          ktext1      type string,      "service Short text
+          sermwskz    type string,      "Serivice tax code
+          otl         type string,      "Overdelivery Tolerance Limit
+          induoo      type string,      "Indicator:Unlimited Overdelivery Allowed
+          tollimit    type string,      "Underdelivery Tolerance Limit
+          bwtar       type string,      "Valuation type
+          subconitem  type string,      ""Item Number* of Components for subcontracting*
+          subconmatnr type string,      ""Material Number* for subcontracting component
+          subconwerks type string,      ""Plant* for subocntracting componenet
+          subconlgort type string,      "Storage loc for subocntracting componenet
+          subconqty   type string,      ""Requirement Quantity*of subcontracting compoenent
+          subconunit  type string,      ""Unit of Entry (ISO format)*of subcontracting compoenent
+          subcondate  type string,      "Date of sun con
+          cvendor     type string,      "Condition type vendor
+          condcurr    type string,      "Condition Type Currency in line item
+          sloc        type string, " lgort_d,
+          suppl_plnt  type string, " werks,
+          suppl_stloc type string, " lgort_d,
+          ship_pt     type string, " vstel,
+
+        end of   ty_file.
+
+types : begin of ty_final,
+          ebeln type ekko-ebeln,
+          newpo type ekko-ebeln,
+          typ   type string,
+          msg   type string,
+        end of   ty_final.
+
+types : begin of ty_service.
+types ebelp type ekpo-ebelp.
+include structure bapiesllc.
+types :  end of ty_service.
+
+data it_service TYPE TABLE OF ty_service.
+data wa_service TYPE ty_service.
+
+data :fieldcatalog type slis_t_fieldcat_alv with header line,
+      it_final     type standard table of ty_final,
+      wa_final     type ty_final,
+      it_file      type standard table of ty_file,
+      it_main      type standard table of ty_file,
+      it_t006      type standard table of t006,
+      wa_t006      type t006,
+      it_com       type standard table of bapimepocomponent,
+      wa_com       type bapimepocomponent,
+      it_comx      type standard table of bapimepocomponentx,
+      wa_comx      type bapimepocomponentx,
+      it_lim       type standard table of bapiesuhc,
+      wa_lim       type bapiesuhc,
+      wa_main      type ty_file,
+      wa_file      type ty_file,
+      gs_file      type ty_file,
+      it_tmp       type standard table of ty_file,
+      wa_tmp       type ty_file,
+      it_ser       type standard table of bapiesllc,
+      wa_ser       type bapiesllc,
+      gd_layout    type slis_layout_alv,
+      gd_repid     like sy-repid,
+      it_stmp      type standard table of ty_file,
+      wa_stmp      type ty_file.
+data :
+  t_poheadertext like standard table of bapimepotextheader
+                   with header line,
+  lt_txt_tab     like standard table of t_poheadertext-text_line
+    with header line.
+
+
+data : wa_header  type bapimepoheader,
+       wa_headerx type bapimepoheaderx,
+       po         type bapimepoheader-po_number,
+       it_ret     type standard table of bapiret2,
+       wa_ret     type bapiret2,
+       it_item    type standard table of bapimepoitem,
+       wa_item    type bapimepoitem,
+       it_acc     type standard table of bapimepoaccount,
+       wa_acc     type bapimepoaccount,
+       it_accx    type standard table of bapimepoaccountx,
+       wa_accx    type bapimepoaccountx,
+       it_sch     type standard table of bapimeposchedule,
+       wa_sch     type bapimeposchedule,
+       it_schx    type standard table of bapimeposchedulx,
+       wa_schx    type bapimeposchedulx,
+       it_itemx   type standard table of bapimepoitemx,
+       wa_itemx   type bapimepoitemx,
+       shipping   like table of bapiitemship with header line,
+       shippingx  like table of bapiitemshipx with header line,
+       it_cond    type standard table of bapimepocond,
+       wa_cond    type bapimepocond,
+       it_condx   type standard table of bapimepocondx,
+       wa_condx   type bapimepocondx,
+       it_sacc    type standard table of bapiesklc,
+       wa_sacc    type bapiesklc,
+       date(8)    type c,
+       dpdate(8)  type c,
+       sdate(8)   type c,
+       edate(8)   type c,
+       rdate(8)   type c,
+       matnr      type mara-matnr,
+       hkont      type skb1-saknr,
+       packno     type packno,
+       subpack    type packno,
+       serno      type i.
+
+data: lv_dummy      type packno,
+      lv_pkgno      type packno,
+      lv_item_pno   type packno,
+      lv_pckg_no    type char10,
+      lv_pckg_no1   type char10,
+      lv_subpckg_no type char10,
+      lv_line_no    type char2,
+      lv_line_no1   type char2,
+      pno           type packno value '0000003009',
+      serviceno     type esll-srvpos,
+      gs_count      type i,
+      netno         type ekkn-nplnr.
+
+data : it_partner type standard table of bapiekkop,
+       it_wyt3    type standard table of wyt3,
+       wa_wyt3    type wyt3,
+       wa_partner type bapiekkop.
+
+selection-screen begin of block b1 with frame title text-001.
+  parameters: p_file type rlgrap-filename,
+              p_test type bapiflag-bapiflag. " no-display.
+selection-screen end of block b1.
+
+at selection-screen on value-request for p_file.
+
+  data : lv_rc       type i,
+         lt_file_tab type filetable.
+
+  call method cl_gui_frontend_services=>file_open_dialog
+    exporting
+      window_title = 'Select a file'
+    changing
+      file_table   = lt_file_tab
+      rc           = lv_rc.
+  if sy-subrc is initial.
+    data(ls_file_tab) = value #( lt_file_tab[ 1 ] optional ).
+    if ls_file_tab is not initial.
+      p_file = ls_file_tab-filename.
+    endif.
+  endif.
+
+start-of-selection.
+  perform uploadfile.
+  perform processdata.
+  perform fcat.
+  perform display.
+*&---------------------------------------------------------------------*
+*& Form UPLOADFILE
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form uploadfile .
+
+  data  : l_filename type string.
+  data  : l_index type sy-tabix.
+  clear : l_filename, l_index.
+  clear : it_file[], wa_file.
+  data : lv_index type sy-tabix.
+
+  l_filename  = p_file.
+
+  data: it_type      type truxs_t_text_data.
+
+  call function 'TEXT_CONVERT_XLS_TO_SAP'
+    exporting
+      i_field_seperator    = 'X'
+      i_line_header        = 'X'
+      i_tab_raw_data       = it_type
+      i_filename           = p_file
+    tables
+      i_tab_converted_data = it_file
+    exceptions
+      conversion_failed    = 1
+      others               = 2.
+
+endform.
+*&---------------------------------------------------------------------*
+*& Form PROCESSDATA
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form processdata .
+
+  refresh : it_tmp[],it_final[],it_acc[],it_item[],it_sch[],it_accx[],it_itemx[],it_schx[],it_ser[],it_sacc[].
+  clear:wa_file,wa_tmp,wa_final,wa_ser,wa_sacc,serno.
+  it_tmp[] = it_file[].
+  it_main  = it_file[].
+
+  sort it_tmp  by ebeln ebelp.
+  sort it_main by ebeln ebelp.
+  delete adjacent duplicates from it_tmp  comparing ebeln.
+  delete adjacent duplicates from it_main comparing ebeln ebelp.
+
+  perform fetchunit.
+  packno = pno.
+
+  data : lv_packno  type packno value 1,
+         lv_subpack type sub_packno,
+         lv_ebeln   type ekpo-ebeln,
+         lv_ebelp   type ekpo-ebelp,
+         lv_count   type srv_line_no.
+
+  if it_tmp[] is not initial.
+
+    break del_abap13.
+    select DISTINCT a~ebeln, a~ebelp from ekpo as a inner join @it_tmp as b on a~ebeln = b~ebeln and a~ebelp = b~ebelp into table @data(lt_ekpo).
+    if sy-subrc = 0.
+      sort lt_ekpo by ebeln ebelp.
+    endif.
+    loop at it_tmp into wa_tmp.
+      data(lv_po_status) = |Purchase Order| && | { wa_tmp-ebeln } | && | is in progress.|.
+      call function 'SAPGUI_PROGRESS_INDICATOR'
+        exporting
+          text = lv_po_status.
+      clear lv_po_status.
+      read table lt_ekpo into data(ls_ekpo) with key ebeln = wa_tmp-ebeln ebelp = wa_tmp-ebelp.
+      if sy-subrc <> 0.
+        on change of wa_tmp-ebeln.
+          if lv_packno is initial.
+            lv_packno = 1.
+          endif.
+        endon.
+        " Header
+        perform fillheader.
+
+        loop at it_main into wa_main where ebeln = wa_tmp-ebeln.
+          if wa_main-ebelp <> lv_ebelp.  " ls_file-ebeln <> lv_ebeln and
+            lv_packno = lv_subpack + lv_packno." + 1.
+            lv_subpack = lv_packno + 1.
+            lv_ebelp = wa_main-ebelp.
+          else.
+            lv_ebelp = wa_main-ebelp.
+          endif.
+          perform fillitem using lv_subpack lv_packno ."CHANGING  wa_item-pckg_no.
+        endloop.
+*--------------------------------------------------------------------*
+        break del_abap13.
+
+        refresh : it_sacc. "it_acc,
+        clear : wa_acc, wa_sacc.
+        sort it_service by pckg_no line_no subpckg_no.
+        delete adjacent duplicates from it_service comparing pckg_no line_no subpckg_no.
+        loop at it_service into wa_service.
+          lv_count = lv_count + 1.
+          wa_ser-pckg_no    = wa_service-pckg_no.
+          wa_ser-line_no    = lv_count. " wa_ser-line_no + 1.
+          wa_ser-ext_line   = wa_service-ext_line.
+          wa_ser-outl_ind   = wa_service-outl_ind.
+          wa_ser-subpckg_no = wa_service-subpckg_no.
+          append wa_ser to it_ser.
+
+          loop at it_file into wa_file where ebeln = wa_main-ebeln
+                                       and   ebelp = wa_service-ebelp.
+            lv_count = lv_count + 1.
+            wa_ser-pckg_no    = wa_service-subpckg_no.
+            clear wa_ser-subpckg_no.
+            wa_ser-line_no    = lv_count.
+            wa_ser-ext_line   = wa_file-seritem.
+            wa_ser-outl_ind   = abap_false.
+            call function 'CONVERSION_EXIT_MATNE_INPUT'
+              exporting
+                input  = wa_file-srvpos
+              importing
+                output = wa_ser-service.
+            wa_ser-quantity   = wa_file-smenge.
+            wa_ser-base_uom   = wa_file-suom.
+            wa_ser-gr_price   = wa_file-gpriceunit.
+
+            append wa_ser to it_ser.
+            clear wa_file.
+
+            wa_sacc-pckg_no = wa_service-subpckg_no.
+            wa_sacc-line_no = wa_service-line_no.
+*          wa_sacc-serno_line = wa_ser-ext_line.
+            wa_sacc-serial_no =  wa_sacc-serial_no + 1.
+*          wa_sacc-
+*          wa_sacc-percentage = '100'.
+            append wa_sacc to it_sacc.
+          endloop.
+          clear : wa_service, wa_ser.
+        endloop.
+        " Fill Account Assignment
+        refresh : it_sacc.
+        clear wa_sacc.
+        data(lt_acc) = it_acc[].
+        sort lt_acc by po_item.
+        delete adjacent duplicates from lt_acc comparing po_item.
+        loop at it_service into wa_service.
+          loop at it_ser into wa_ser where pckg_no = wa_service-subpckg_no. " outl_ind is INITIAL.
+            loop at lt_acc into wa_acc where po_item = wa_service-ebelp.
+              wa_sacc-pckg_no = wa_ser-pckg_no.
+              wa_sacc-line_no = wa_ser-line_no.
+*            wa_sacc-serial_no = wa_acc-serial_no.
+              wa_sacc-serial_no = wa_sacc-serial_no + 1.
+              append wa_sacc to it_sacc.
+            endloop.
+            clear wa_ser.
+          endloop.
+          clear wa_sacc.
+          clear wa_service.
+        endloop.
+*--------------------------------------------------------------------*
+        clear : lv_packno, lv_subpack,wa_main.
+        break del_abap13.
+        perform postpo.
+
+        clear : wa_file,wa_tmp,wa_header,wa_headerx,wa_acc,wa_accx,wa_item,wa_itemx,wa_ser,wa_com,wa_comx,wa_cond,wa_condx,wa_lim,
+                packno,subpack,wa_sacc,wa_sch,wa_schx,gs_count,wa_wyt3,wa_partner, lv_ebeln, lv_ebelp, lv_count.
+        refresh : it_itemx[],it_item[],it_acc[],it_accx[],it_ser[],it_com[],it_comx[],it_cond[],it_condx[],it_lim[],
+                  it_sacc[],it_sch[],it_schx[],it_partner[],it_wyt3[], it_service[].
+      endif.
+    endloop.
+
+  endif.
+
+
+*  IF it_tmp[] IS NOT INITIAL.
+*
+*    LOOP AT it_tmp INTO wa_tmp.
+*
+*      "Header
+*      PERFORM fillheader.
+*  BREAK del_abap6.
+*  BREAK del_abap13.
+*      LOOP AT it_main INTO wa_main WHERE ebeln = wa_tmp-ebeln.
+*        "Item
+**        packno  = packno  + 1.
+**        subpack = packno  + 1.
+*
+*        IF  wa_tmp-ebelp <> lv_ebelp.  " ls_file-ebeln <> lv_ebeln and
+*          lv_packno = lv_subpack + lv_packno." + 1.
+*          lv_subpack = lv_packno + 1.
+*          lv_ebelp = wa_main-ebelp.
+*        ELSE.
+*           packno  = packno  + 1.
+*           subpack = packno  + 1.
+*          lv_ebelp =  wa_tmp-ebelp.
+*        ENDIF.
+*        PERFORM fillitem USING lv_subpack lv_packno.
+*
+*        packno = subpack.
+*        CLEAR :subpack,wa_file,wa_main,wa_ser,wa_acc,wa_accx,wa_cond,wa_condx,wa_item,wa_itemx,
+*               wa_sch,wa_schx,wa_sacc,wa_lim,wa_com,wa_comx.
+*      ENDLOOP.
+*      CLEAR : lv_packno, lv_subpack,wa_tmp.
+*      PERFORM postpo.
+*
+*      CLEAR : wa_file,wa_tmp,wa_header,wa_headerx,wa_acc,wa_accx,wa_item,wa_itemx,wa_ser,wa_com,wa_comx,wa_cond,wa_condx,wa_lim,
+*              packno,subpack,wa_sacc,wa_sch,wa_schx,gs_count,wa_wyt3,wa_partner.
+*      REFRESH : it_itemx[],it_item[],it_acc[],it_accx[],it_ser[],it_com[],it_comx[],it_cond[],it_condx[],it_lim[],
+*                it_sacc[],it_sch[],it_schx[],it_partner[],it_wyt3[].
+*    ENDLOOP.
+*
+*  ENDIF.
+endform.
+*&---------------------------------------------------------------------*
+*& Form FCAT
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form fcat .
+
+  gd_layout-colwidth_optimize = 'X'.
+
+  fieldcatalog-fieldname   = 'EBELN'.
+  fieldcatalog-seltext_m   = 'PO No'.
+  fieldcatalog-tabname     = 'IT_FINAL'.
+  append fieldcatalog to fieldcatalog.
+  clear  fieldcatalog.
+
+  fieldcatalog-fieldname   = 'NEWPO'.
+  fieldcatalog-seltext_m   = 'New PO No'.
+  fieldcatalog-tabname     = 'IT_FINAL'.
+  append fieldcatalog to fieldcatalog.
+  clear  fieldcatalog.
+
+  fieldcatalog-fieldname   = 'TYP'.
+  fieldcatalog-seltext_m   = 'Message Type'.
+  fieldcatalog-tabname     = 'IT_FINAL'.
+  append fieldcatalog to fieldcatalog.
+  clear  fieldcatalog.
+
+  fieldcatalog-fieldname   = 'MSG'.
+  fieldcatalog-seltext_m   = 'Message'.
+  fieldcatalog-outputlen   = '50'.
+  fieldcatalog-tabname     = 'IT_FINAL'.
+  append fieldcatalog to fieldcatalog.
+  clear  fieldcatalog.
+
+endform.
+*&---------------------------------------------------------------------*
+*& Form DISPLAY
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form display .
+
+  gd_repid = sy-repid.
+  call function 'REUSE_ALV_GRID_DISPLAY'
+    exporting
+      i_callback_program = gd_repid
+*     i_callback_top_of_page  = 'TOP-OF-PAGE'  "see FORM
+*     i_callback_user_command = 'USER_COMMAND'
+      it_fieldcat        = fieldcatalog[]
+      i_save             = 'X'
+*     is_variant         = g_variant
+    tables
+      t_outtab           = it_final[]
+    exceptions
+      program_error      = 1
+      others             = 2.
+  if sy-subrc <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*         WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+  endif.
+
+endform.
+*&---------------------------------------------------------------------*
+*& Form POSTPO
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form postpo .
+  refresh it_ret.
+*  WAIT UP TO 10 SECONDS.
+*  call function 'BAPI_PO_CREATE1'  "#EC CI_USAGE_OK[3404390]
+*    exporting
+*      poheader          = wa_header
+*      poheaderx         = wa_headerx
+*      testrun           = p_test
+*      no_price_from_po  = 'X'
+*    importing
+*      exppurchaseorder  = po
+*    tables
+*      return            = it_ret[]
+*      poitem            = it_item[]
+*      poitemx           = it_itemx[]
+*      poaccount         = it_acc[]
+*      poaccountx        = it_accx[]
+**     poschedule        = it_sch[]     -- Abhishek.P(12.02.2025)
+**     poschedulex       = it_schx[]    -- Abhishek.P(12.02.2025)
+*      poservices        = it_ser[]
+*      posrvaccessvalues = it_sacc[]
+**     pocomponentsx     = it_comx[]     -- Abhishek.P(12.02.2025)
+**     pocomponents      = it_com[]      -- Abhishek.P(12.02.2025)
+*      pocond            = it_cond[]
+*      pocondx           = it_condx[].
+**      polimits          = it_lim[]      -- Abhishek.P(12.02.2025)
+**      popartner         = it_partner[]. -- Abhishek.P(12.02.2025)
+**      poshipping        = shipping
+**      poshippingx       = shippingx.
+
+  call function 'BAPI_PO_CHANGE'
+    exporting
+      purchaseorder     = wa_header-po_number
+      testrun           = p_test
+      no_price_from_po  = 'X'
+    tables
+      return            = it_ret
+      poitem            = it_item
+      poitemx           = it_itemx
+      poaccount         = it_acc
+      poaccountx        = it_accx
+      poservices        = it_ser
+      posrvaccessvalues = it_sacc.
+
+  read table it_ret into wa_ret with key type = 'E'.
+  if sy-subrc = 0.
+
+    loop at it_ret into wa_ret where type = 'E'.
+      wa_final-ebeln = wa_tmp-ebeln.
+      wa_final-typ   = 'Error'.
+      wa_final-msg   = wa_ret-message.
+      append wa_final to it_final.
+      clear wa_final.
+    endloop.
+
+  else.
+    call function 'BAPI_TRANSACTION_COMMIT'
+      exporting
+        wait = 'X'.
+    wait up to 1 seconds.
+
+    loop at it_ret into wa_ret where type ne 'E' and type ne 'W'.
+      wa_final-ebeln = wa_tmp-ebeln.
+      wa_final-newpo = po.
+      wa_final-typ   = wa_ret-type.
+      wa_final-msg   = wa_ret-message.
+      append wa_final to it_final.
+      clear wa_final.
+    endloop.
+  endif.
+
+endform.
+*&---------------------------------------------------------------------*
+*& Form FILLHEADER
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form  fillheader .
+
+  clear : date,dpdate,sdate,edate.
+  call function 'CONVERSION_EXIT_ALPHA_INPUT'
+    exporting
+      input  = wa_tmp-lifnr
+    importing
+      output = wa_tmp-lifnr.
+
+*  wa_header-vper_start  = wa_tmp-st_date.
+*  wa_header-vper_end    = wa_tmp-en_date.
+*  wa_headerx-vper_start = 'X'.
+*  wa_headerx-vper_end   = 'X'.
+
+*  if wa_tmp-date is not initial.
+*    concatenate wa_tmp-date+6(4) wa_tmp-date+3(2) wa_tmp-date+0(4) into date.
+*    condense date.
+*    shift date left deleting leading space.
+*  endif.
+*
+  if wa_tmp-dpdate is not initial.
+    concatenate wa_tmp-dpdate+6(4) wa_tmp-dpdate+3(2) wa_tmp-dpdate+0(4) into dpdate.
+    condense dpdate.
+    shift dpdate left deleting leading space.
+  endif.
+*
+*  if wa_tmp-svdate is not initial.
+*    concatenate wa_tmp-svdate+6(4) wa_tmp-svdate+3(2) wa_tmp-svdate+0(4) into sdate.
+*    condense sdate.
+*    shift sdate left deleting leading space.
+*  endif.
+*
+*  if wa_tmp-evdate is not initial.
+*    concatenate wa_tmp-evdate+6(4) wa_tmp-evdate+3(2) wa_tmp-evdate+0(4) into edate.
+*    condense edate.
+*    shift edate left deleting leading space.
+*  endif.
+
+  clear : sdate, edate, date.
+
+  call function 'CONVERT_DATE_TO_INTERNAL'
+    exporting
+      date_external            = wa_tmp-date
+      accept_initial_date      = 'X'
+    importing
+      date_internal            = date
+    exceptions
+      date_external_is_invalid = 1
+      others                   = 2.
+
+
+  call function 'CONVERT_DATE_TO_INTERNAL'
+    exporting
+      date_external            = wa_tmp-svdate
+      accept_initial_date      = 'X'
+    importing
+      date_internal            = sdate
+    exceptions
+      date_external_is_invalid = 1
+      others                   = 2.
+
+  call function 'CONVERT_DATE_TO_INTERNAL'
+    exporting
+      date_external            = wa_tmp-evdate
+      accept_initial_date      = 'X'
+    importing
+      date_internal            = edate
+    exceptions
+      date_external_is_invalid = 1
+      others                   = 2.
+
+
+  wa_header-po_number            = |{ wa_tmp-ebeln alpha = in }|.
+  wa_header-comp_code            = wa_tmp-bukrs.
+  wa_header-doc_type             = wa_tmp-bsart.
+*  IF wa_header-doc_type EQ 'ZIC'.
+  wa_header-vendor               = wa_tmp-lifnr.
+*  ENDIF.
+  wa_header-purch_org            = wa_tmp-ekorg.
+  wa_header-pur_group            = wa_tmp-ekgrp.
+  wa_header-suppl_plnt            = wa_tmp-suppl_plnt.
+  data : ws_langu like sy-langu.
+  ws_langu = sy-langu. "Language variable
+  wa_header-langu = ws_langu .
+
+  wa_header-doc_date             = date.
+*  wa_header-currency             = wa_tmp-waers.
+  wa_header-pmnttrms             = wa_tmp-zterm.
+  wa_header-incoterms1           = wa_tmp-inco1.
+  wa_header-incoterms2           = wa_tmp-inco2.
+*  wa_header-incoterms2l          = wa_tmp-inco2.
+  wa_header-our_ref              = wa_tmp-refer.
+*  wa_header-downpay_type         = wa_tmp-dpind.
+*  wa_header-downpay_amount       = wa_tmp-dpamt.
+*  wa_header-downpay_percent      = wa_tmp-dpayper.
+*  wa_header-downpay_duedate      = dpdate.
+  wa_header-vper_start           = sdate.
+  wa_header-vper_end             = edate.
+  wa_header-retention_type       = wa_tmp-ri.
+  wa_header-retention_percentage = wa_tmp-rper.
+
+  wa_headerx-po_number            = abap_true.
+  wa_headerx-item_intvl           = abap_true.
+*  wa_headerx-subitemint           = abap_true.
+  wa_headerx-comp_code            = abap_true.
+  wa_headerx-doc_type             = abap_true.
+*  IF wa_header-doc_type EQ 'ZIC'.
+  wa_headerx-vendor               = abap_true.
+*  ENDIF.
+
+  wa_headerx-purch_org            = abap_true.
+  wa_headerx-pur_group            = abap_true.
+  wa_headerx-suppl_plnt            = abap_true.
+
+  wa_headerx-langu = abap_true .
+  wa_headerx-doc_date             = abap_true.
+*  wa_headerx-currency             = abap_true.
+  wa_headerx-pmnttrms             = abap_true.
+  wa_headerx-incoterms1           = abap_true.
+  wa_headerx-incoterms2           = abap_true.
+*  wa_headerx-incoterms2l          = abap_true.
+  wa_headerx-our_ref              = abap_true.
+*  wa_headerx-downpay_type         = abap_true.
+*  wa_headerx-downpay_amount       = abap_true.
+*  wa_headerx-downpay_percent      = abap_true.
+*  wa_headerx-downpay_duedate      = abap_true.
+  wa_headerx-vper_start           = abap_true.
+  wa_headerx-vper_end             = abap_true.
+  wa_headerx-retention_type       = abap_true.
+  wa_headerx-retention_percentage = abap_true.
+
+
+  data: lv_txt(500) type c.
+  clear lv_txt.
+  move 'p_po_create_rec-header_txt' to lv_txt.
+  clear lt_txt_tab.
+  refresh lt_txt_tab.
+  call function 'RKD_WORD_WRAP'
+    exporting
+      textline            = lv_txt
+      outputlen           = 132
+    tables
+      out_lines           = lt_txt_tab
+    exceptions
+      outputlen_too_large = 1
+      others              = 2.
+
+  data: wa_poheadertext like line of t_poheadertext.
+  wa_poheadertext-text_id = 'F01'.
+  wa_poheadertext-text_form = '*'.
+  loop at lt_txt_tab.
+    wa_poheadertext-text_line = lt_txt_tab.
+    append wa_poheadertext to t_poheadertext.
+  endloop.
+
+  "Partner
+*  SELECT *
+*  FROM wyt3
+*  INTO TABLE it_wyt3
+*  WHERE lifnr = wa_tmp-lifnr
+*  AND   ekorg = wa_tmp-ekorg.
+*
+*  LOOP AT it_wyt3 INTO wa_wyt3.
+*
+*    CALL FUNCTION 'RV_CONVERSION_EXIT_PARVW_OUT'
+*      EXPORTING
+*        parvw = wa_wyt3-parvw
+*        spras = sy-langu
+*      IMPORTING
+*        pabez = wa_wyt3-parvw.
+*
+*    wa_partner-partnerdesc = wa_wyt3-parvw.
+*    wa_partner-langu       = 'E'.
+*    wa_partner-buspartno   = wa_wyt3-lifn2.
+*    APPEND wa_partner TO it_partner.
+*    CLEAR : wa_wyt3,wa_partner.
+*  ENDLOOP.
+*  CLEAR : date,dpdate,sdate,edate.
+
+endform.
+*&---------------------------------------------------------------------*
+*& Form FILLITEM
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form fillitem using lv_subpack lv_packno.
+
+  clear : matnr,hkont,netno.
+  matnr = wa_main-matnr.
+  call function 'CONVERSION_EXIT_MATNE_INPUT'
+    exporting
+      input  = wa_main-matnr
+    importing
+      output = matnr.
+
+  call function 'CONVERSION_EXIT_ALPHA_INPUT'
+    exporting
+      input  = wa_main-ebelp
+    importing
+      output = wa_main-ebelp.
+
+  call function 'CONVERSION_EXIT_ALPHA_INPUT'
+    exporting
+      input  = wa_main-hkont
+    importing
+      output = hkont.
+
+  if wa_main-netno is not initial.
+    call function 'CONVERSION_EXIT_ALPHA_INPUT'
+      exporting
+        input  = wa_main-netno
+      importing
+        output = netno.
+  endif.
+
+  wa_item-po_item     = wa_main-ebelp.
+  wa_item-item_cat    = wa_main-pstyp.
+  wa_item-acctasscat  = wa_main-knttp.
+  wa_item-material    = matnr.
+  wa_item-quantity    = wa_main-menge.
+  wa_item-po_unit     = wa_main-uom.
+*  wa_item-po_unit_iso = wa_t006-isocode.
+  wa_item-plant       = wa_main-werks.
+*  CONCATENATE  '000000000' wa_main-ebelp+3(1) into wa_item-pckg_no .
+*  select SINGLE NRLEVEL into  wa_item-pckg_no
+*     from NRIV where OBJECT = 'SERVICE'.
+*  BREAK del_abap6.
+  wa_item-pckg_no =  lv_packno.
+******************************************
+**     DATA : lv_packno  TYPE packno VALUE 1,
+**         lv_subpack TYPE sub_packno,
+**         lv_ebeln   TYPE ekpo-ebeln,
+**         lv_ebelp   TYPE ekpo-ebelp.
+**
+**      IF wa_main-ebelp <> lv_ebelp.  " ls_file-ebeln <> lv_ebeln and
+**          lv_packno = wa_item-pckg_no ."lv_subpack + lv_packno." + 1.
+***          lv_subpack = lv_packno + 1.
+**          lv_ebelp = wa_main-ebelp.
+**        ELSE.
+***           packno  = packno  + 1.
+***           subpack = packno  + 1.
+**          CLEAR lv_packno.
+**          lv_ebelp =  wa_main-ebelp.
+**        ENDIF.
+
+
+*******************************************
+  wa_item-pckg_no  = lv_packno.
+  wa_item-stge_loc    = wa_main-lgort.
+*  wa_item-net_price   = wa_main-netprice.
+*  wa_item-agreement   = wa_main-npp.
+*  wa_item-agmt_item   = wa_main-inpp.
+  wa_item-preq_name   = wa_main-reqname.
+*  wa_item-conf_ctrl   = wa_main-conkey.
+  wa_item-matl_group  = wa_main-maktl.
+  wa_item-trackingno  = wa_main-banfn.
+*  wa_item-no_more_gr  = wa_main-delind.
+*  wa_item-gr_basediv  = wa_main-grinvind.
+  wa_item-price_unit  = wa_main-priceunit.
+  wa_item-costcenter  = wa_main-kostl.
+*  wa_item-orderpr_un  = wa_main-opriceunit.
+*  wa_item-gr_ind      = wa_main-grind.
+  wa_item-tax_code    = wa_main-mwskz.
+  wa_item-short_text  = wa_main-shorttext.   " wa_tmp-shorttext
+*  wa_item-ir_ind      = wa_main-irind.
+*  wa_item-preq_no     = wa_main-banfn.
+*  wa_item-preq_item   = wa_main-bnfpo.
+*  wa_item-over_dlv_tol  = wa_main-otl.
+*  wa_item-unlimited_dlv = wa_main-induoo.
+*  wa_item-under_dlv_tol = wa_main-tollimit.
+*  wa_item-val_type      = wa_main-bwtar.
+*  IF wa_main-matnr IS INITIAL.
+*    wa_item-pckg_no       = packno.
+*  ENDIF.
+
+  data: tmpmaterial type string.
+  tmpmaterial = wa_main-matnr.
+  translate tmpmaterial to upper case.
+  if tmpmaterial cs '-DEL-'.
+    wa_item-ir_ind = ''.
+    wa_itemx-ir_ind = ''.
+  endif.
+  wa_item-no_rounding = 'X'.
+  wa_item-no_rounding = 'X'.
+  wa_item-acctasscat = wa_tmp-knttp.
+  append wa_item to it_item.
+*  APPEND wa_item TO it_item.
+
+  "Item X
+  wa_itemx-po_item     = wa_main-ebelp.
+  wa_itemx-pckg_no = abap_true.
+  wa_itemx-po_itemx    = abap_true.
+  wa_itemx-item_cat    = abap_true.
+  wa_itemx-acctasscat  = abap_true.
+*  wa_itemx-material    = abap_true.
+*  wa_itemx-quantity    = abap_true.
+  wa_itemx-po_unit     = abap_true.
+*  wa_itemx-po_unit_iso = abap_true.
+  wa_itemx-plant       = abap_true.
+*  wa_itemx-stge_loc    = abap_true.
+  wa_itemx-net_price   = abap_true.
+*  wa_itemx-agreement   = abap_true.
+*  wa_itemx-agmt_item   = abap_true.
+  wa_itemx-preq_name   = abap_true.
+*  wa_itemx-conf_ctrl    = abap_true.
+  wa_itemx-matl_group  = abap_true.
+  wa_itemx-trackingno  = abap_true.
+*  wa_itemx-no_more_gr  = abap_true.
+*  wa_itemx-gr_basediv  = abap_true.
+  wa_itemx-price_unit  = abap_true.
+  wa_itemx-costcenter  = abap_true.
+*  wa_itemx-orderpr_un  = abap_true.
+*  wa_itemx-gr_ind      = abap_true.
+  wa_itemx-tax_code    = abap_true.
+  wa_itemx-short_text  = abap_true.
+*  wa_itemx-ir_ind      = abap_true.
+*  wa_itemx-preq_no     = abap_true.
+*  wa_itemx-preq_item   = abap_true.
+*  wa_itemx-over_dlv_tol  = abap_true.
+*  wa_itemx-unlimited_dlv = abap_true.
+*  wa_itemx-under_dlv_tol = abap_true.
+*  wa_itemx-val_type      = abap_true.
+*
+*  IF wa_main-matnr IS INITIAL.
+*    wa_itemx-pckg_no = abap_true.
+*  ENDIF.
+  append wa_itemx to it_itemx.
+
+* Create new shipping
+  clear shipping.
+  clear shippingx.
+  shipping-po_item = wa_main-ebelp.
+  shipping-route = 'NOMAIL'.
+
+  if wa_main-ship_pt is not initial.
+    shipping-ship_point = wa_main-ship_pt.
+  endif.
+
+  append shipping.
+  shippingx-po_item = wa_main-ebelp.
+  shippingx-route = abap_true.
+
+  if wa_main-ship_pt is not initial.
+    shippingx-ship_point = abap_true.
+  endif.
+
+  append shippingx.
+
+*--------------------------------------------------------------------*
+  "Account
+  loop at it_file into data(temp_file) where ebeln = wa_main-ebeln
+                                       and   ebelp = wa_main-ebelp.
+    if temp_file-matnr is initial.
+      wa_acc-serial_no   = wa_acc-serial_no + 1.
+      if wa_main-knttp   = 'N'.
+        wa_acc-activity  = temp_file-act.
+      endif.
+    endif.
+    wa_acc-po_item     = temp_file-ebelp.
+    wa_acc-costcenter  = |{ temp_file-kostl alpha = in }|.
+    wa_acc-gl_account  = |{ temp_file-order alpha = in }|.
+    wa_acc-wbs_element = temp_file-disub_pspnr.
+    wa_acc-network     = |{ temp_file-netno alpha = in }|.                 "wa_main-netno.
+    wa_acc-quantity    = temp_file-menge.
+    append wa_acc to it_acc.
+
+    "Account X
+    wa_accx-po_item     = temp_file-ebelp.
+*  IF wa_main-matnr IS INITIAL.
+    wa_accx-serial_no   = wa_accx-serial_no + 1.
+    wa_accx-serial_nox  = abap_true.
+    wa_accx-po_itemx    = abap_true.
+    if temp_file-kostl is not initial.
+      wa_accx-costcenter  = abap_true.
+    endif.
+    wa_accx-gl_account  = abap_true.
+    wa_accx-wbs_element = abap_true.
+    wa_accx-network     = abap_true.
+**  wa_accx-sd_doc      = abap_true.
+**  wa_accx-itm_number  = abap_true.
+*    wa_accx-quantity    = abap_true.
+*  wa_accx-serial_no   = abap_true.
+*  wa_accx-serial_nox  = abap_true.
+    append wa_accx to it_accx.
+    clear temp_file.
+  endloop.
+*--------------------------------------------------------------------*
+  "Schedule
+  wa_sch-po_item       = wa_main-ebelp.
+  wa_sch-sched_line    = '0001'.
+  wa_sch-delivery_date = wa_main-deldate.
+  wa_sch-quantity      = wa_main-menge.
+  append wa_sch to it_sch.
+  clear : wa_sch.
+
+********Po Schedule X data .
+  wa_schx-po_item       = wa_main-ebelp.
+  wa_schx-sched_line    = '0001'.
+  wa_schx-sched_linex   = abap_true.
+  wa_schx-po_itemx      = abap_true.
+  wa_schx-delivery_date = abap_true.
+  wa_schx-quantity      = abap_true.
+  append wa_schx to it_schx[].
+  clear : wa_schx.
+
+  "Conditions
+  if wa_main-matnr is not initial.
+    clear gs_file.
+    loop at it_file into gs_file where ebeln = wa_main-ebeln
+                                  and  ebelp = wa_main-ebelp.
+
+      wa_cond-itm_number    = gs_file-ebelp.            "wa_main-ebelp.
+      wa_cond-cond_st_no    = wa_cond-cond_st_no + 1.   "'001'.
+      wa_cond-cond_type     = gs_file-kschl.            "wa_main-kschl."'PBXX'.
+*      IF gs_file-kschl EQ 'PBXX'.
+      wa_cond-cond_value    = gs_file-netprice.         "wa_main-netprice.
+*      ELSE.
+*        wa_cond-cond_value    = gs_file-netprice * 10.         "wa_main-netprice.
+*      ENDIF.
+      wa_cond-currency      = gs_file-waers.            "wa_main-waers.
+      wa_cond-currency_iso  = gs_file-waers.            "wa_main-waers.
+      wa_cond-cond_unit     = gs_file-uom.              "wa_main-uom.
+*  wa_cond-cond_unit_iso = wa_main-uom.
+      wa_cond-cond_p_unt    = '1'.
+*      wa_cond-change_id     = 'U'.
+      if gs_file-kschl = 'PBXX'.
+        wa_cond-change_id     = 'U'.
+      else.
+        wa_cond-change_id     = 'I'.
+        wa_cond-cond_updat    = 'X'.
+      endif.
+
+      case gs_file-kschl.
+        when 'FRA1' or 'RA00' or 'RA01' or 'JCDB' or 'JSWS' or 'ZCHP' or
+             'ZOCP' or 'ZPFP' or 'ZINP' or 'ZPF1' or 'ZPF4' or 'ZLND'.
+          wa_cond-currency = '%'.
+      endcase.
+
+      wa_cond-vendor_no = gs_file-cvendor.
+      append wa_cond to it_cond.
+
+      "Conditions
+      wa_condx-itm_number   = gs_file-ebelp.            "wa_main-ebelp.
+      wa_condx-cond_st_no   = abap_true.
+      wa_condx-itm_numberx  = abap_true.
+      wa_condx-cond_type    = abap_true.
+      wa_condx-cond_value   = abap_true.
+      wa_condx-currency     = abap_true.
+      wa_condx-currency_iso = abap_true.
+      wa_condx-cond_unit    = abap_true.
+*  wa_cond-cond_unit_iso = abap_true.
+      wa_condx-cond_p_unt   = abap_true.
+      wa_condx-change_id    = abap_true.
+      wa_condx-cond_updat   = abap_true.
+      wa_condx-currency     = abap_true.
+      wa_condx-vendor_no    = abap_true.
+      append wa_condx to it_condx.
+
+      clear gs_file.
+    endloop.
+  endif.
+
+  "Services
+  if wa_main-matnr is initial.
+*    it_stmp[] = it_file[].
+*    SORT it_stmp BY ebeln ebelp.
+*    DELETE ADJACENT DUPLICATES FROM it_stmp COMPARING ebeln ebelp.
+    clear wa_ser.
+    loop at it_file into gs_file where ebeln   = wa_main-ebeln
+                                  and  ebelp   = wa_main-ebelp.
+
+      gs_count = gs_count + 1.
+*--------------------------------------------------------------------*
+      " Begin of Commented by Abhishek.P(12.02.2025)
+*      IF gs_count EQ 1.
+*        wa_ser-pckg_no    = wa_item-pckg_no.
+*        wa_ser-line_no    = wa_item-pckg_no. "wa_ser-line_no + 1.
+*        wa_ser-outl_ind   = 'X'.
+*        wa_ser-subpckg_no = wa_item-pckg_no + 1. "lv_subpack."
+*        APPEND wa_ser TO it_ser[].
+*        CLEAR wa_ser.
+*      ENDIF.
+*      subpack = wa_item-pckg_no + 1.
+*      wa_ser-pckg_no    = subpack.
+      " End of Commented by Abhishek.P(12.02.2025)
+
+      " Begin of Insert by Abhishek.P(12.02.2025)
+      wa_service-ebelp  = gs_file-ebelp.
+      wa_service-pckg_no = lv_packno.
+      wa_service-line_no = wa_service-line_no + 1.
+      wa_service-outl_ind = abap_true.
+      wa_service-subpckg_no = lv_subpack.
+*      wa_service-ext_line   = gs_file-seritem.
+      append wa_service to it_service.
+      " End of Insert by Abhishek.P(12.02.2025)
+*--------------------------------------------------------------------*
+*      IF gs_count GT 1.
+*        wa_ser-line_no    = wa_ser-line_no + 1.
+*      ELSE.
+*        wa_ser-line_no    = wa_ser-line_no + 2.
+*      ENDIF.
+*      wa_ser-ext_line   = gs_file-seritem.
+*      wa_ser-quantity   = gs_file-smenge.
+*      wa_ser-base_uom   = gs_file-suom.
+*      wa_ser-price_unit = gs_file-spriceunit.
+*      wa_ser-gr_price   = gs_file-gpriceunit.
+*      wa_ser-net_value  = gs_file-snetvalue.
+*      wa_ser-tax_code   = gs_file-sermwskz.
+*      wa_ser-short_text = gs_file-ktext1.
+**      wa_ser-matl_group = gs_file-maktl.
+
+*      call function 'CONVERSION_EXIT_MATNE_INPUT'
+*        exporting
+*          input  = gs_file-srvpos
+*        importing
+*          output = serviceno.
+
+*      wa_ser-service    = serviceno.
+*      append wa_ser to it_ser[].
+
+      "POSRVACCESSVALUES
+      wa_sacc-pckg_no    = lv_subpack.   " subpack.
+      wa_sacc-line_no    = wa_ser-line_no.
+      wa_sacc-serno_line = wa_sacc-serno_line + 1.
+      wa_sacc-serial_no  = wa_sacc-serial_no  + 1.
+*      wa_sacc-quantity   = gs_file-smenge.
+      wa_sacc-percentage = '100'.
+      wa_sacc-net_value  = gs_file-snetvalue.
+      append wa_sacc to it_sacc.
+
+      clear : wa_accx, wa_acc, wa_lim, wa_sacc, gs_file,serviceno, wa_service.
+    endloop.
+
+
+  endif.
+  clear gs_count.
+
+  "Components
+  loop at it_file into gs_file where ebeln   = wa_main-ebeln
+                                 and ebelp   = wa_main-ebelp.
+
+    if wa_main-subconmatnr is initial.
+      continue.
+    endif.
+
+    wa_com-po_item        = wa_main-ebelp.
+    wa_com-item_no        = wa_main-subconitem.
+    wa_com-material_long  = wa_main-subconmatnr.
+    wa_com-plant           = wa_main-subconwerks.
+    wa_com-entry_quantity = wa_main-subconqty.
+    wa_com-entry_uom      = wa_main-subconunit.
+
+    if gs_file-subcondate is not initial.
+      concatenate gs_file-subcondate+6(4) gs_file-subcondate+3(2) gs_file-subcondate+0(4) into rdate.
+      condense rdate.
+      shift rdate left deleting leading space.
+      wa_com-req_date       = rdate.
+    endif.
+    append wa_com to it_com.
+
+    if it_com[] is not initial.
+      wa_comx-po_item        = wa_main-ebelp.
+      wa_comx-item_no        = abap_true.
+      wa_comx-po_itemx       = abap_true.
+      wa_comx-item_no        = abap_true.
+      wa_comx-material_long  = abap_true.
+      wa_comx-plant          = abap_true.
+      wa_comx-entry_quantity = abap_true.
+      wa_comx-entry_uom      = abap_true.
+      wa_comx-req_date       = abap_true.
+      append wa_comx to it_comx.
+    endif.
+
+    clear gs_file.
+  endloop.
+
+  "Limits
+  clear wa_lim.
+  wa_lim-limit      = wa_main-olimit.
+  wa_lim-exp_value  = wa_main-olimitval.
+  wa_lim-no_limit   = wa_main-nolimit.
+
+  if wa_lim-limit is not initial or wa_lim-exp_value is not initial or wa_lim-no_limit is not initial.
+    append wa_lim to it_lim.
+    clear wa_lim.
+  endif.
+
+endform.
+*&---------------------------------------------------------------------*
+*& Form FETCHUNIT
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form fetchunit .
+
+  data : r_unit type range of t006-msehi,
+         w_unit like line of r_unit.
+
+  loop at it_main into wa_main.
+    w_unit-sign   = 'I'.
+    w_unit-option = 'EQ'.
+    w_unit-low    = wa_main-uom.
+    append w_unit to r_unit.
+    clear w_unit.
+  endloop.
+
+  select *
+  from t006
+  into table it_t006
+  where msehi in r_unit.
+
+*  CLEAR : subpack,packno.
+*  SELECT MAX( packno )
+*  FROM eslh
+*  INTO packno.
+
+endform.
