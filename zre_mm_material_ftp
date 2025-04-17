@@ -1,0 +1,22 @@
+*&---------------------------------------------------------------------*
+*& Report ZRE_MM_MATERIAL_FTP
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+report zre_mm_material_ftp.
+
+include zre_mm_material_ftp_top.
+include zre_mm_material_ftp_sel.
+include zre_mm_material_ftp_sub.
+
+
+start-of-selection .
+  if p_file is initial.
+    perform ftp_connect .
+    perform read_ftp_file .
+    perform read_data_from_files .
+  else.
+    perform uploadfile.
+    perform processdata.
+    PERFORM display_data.
+  endif.
